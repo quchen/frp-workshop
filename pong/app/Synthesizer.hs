@@ -4,16 +4,15 @@
     from the unofficial tutorial.
     <http://wiki.haskell.org/FRP_explanation_using_reactive-banana>
 ------------------------------------------------------------------------------}
+{-# LANGUAGE NumDecimals #-}
 {-# LANGUAGE RecursiveDo #-}
-    -- allows recursive do notation
-    -- mdo
-    --     ...
 
 module Main where
 
-import Control.Monad (forever)
-import Data.Char     (toUpper)
-import System.IO     (BufferMode (..), hSetBuffering, hSetEcho, stdin)
+import Control.Concurrent
+import Control.Monad      (forever)
+import Data.Char          (toUpper)
+import System.IO          (BufferMode (..), hSetBuffering, hSetEcho, stdin)
 
 import Reactive.Banana
 import Reactive.Banana.Frameworks
@@ -59,10 +58,10 @@ getOctaveChange c = case c of
     '-' -> Just (-1)
     _   -> Nothing
 
-makeNetworkDescription :: AddHandler Char -> MomentIO ()
-makeNetworkDescription addKeyEvent = do
-    eKey <- fromAddHandler addKeyEvent
+makeNetworkDescription :: AddHandler Char -> AddHandler () -> MomentIO ()
+makeNetworkDescription addKeyEvent addClockEvent = do
 
+    eKey <- fromAddHandler addKeyEvent
     let eOctaveChange = filterMapJust getOctaveChange eKey
     bOctave <- accumB 3 (changeOctave <$> eOctaveChange)
 
@@ -75,11 +74,16 @@ makeNetworkDescription addKeyEvent = do
     reactimate' $ fmap (\n -> putStrLn ("Now playing " ++ show n))
                  <$> eNoteChanged
 
+    eTime <- fromAddHandler addClockEvent
+    reactimate (putStrLn "tick" <$ eTime)
+
 main :: IO ()
 main = do
     (addKeyEvent, fireKey) <- newAddHandler
-    network <- compile (makeNetworkDescription addKeyEvent)
+    (addClockEvent, fireClock) <- newAddHandler
+    network <- compile (makeNetworkDescription addKeyEvent addClockEvent)
     actuate network
     hSetEcho stdin False
     hSetBuffering stdin NoBuffering
+    _ <- forkIO (forever (threadDelay 1e6 >> fireClock ()))
     forever (getChar >>= fireKey)
