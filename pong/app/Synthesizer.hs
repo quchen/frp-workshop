@@ -60,23 +60,28 @@ getOctaveChange c = case c of
 
 makeNetworkDescription :: AddHandler Char -> AddHandler Integer -> MomentIO ()
 makeNetworkDescription addKeyEvent addClockEvent = do
+    keyHandling
+    timeHandling
+  where
 
-    eKey <- fromAddHandler addKeyEvent
-    let eOctaveChange = filterMapJust getOctaveChange eKey
-    bOctave <- accumB 3 (changeOctave <$> eOctaveChange)
+    keyHandling = do
+        eKey <- fromAddHandler addKeyEvent
+        let eOctaveChange = filterMapJust getOctaveChange eKey
+        bOctave <- accumB 3 (changeOctave <$> eOctaveChange)
 
-    let ePitch = filterMapJust (`lookup` charPitches) eKey
-    bPitch <- stepper PC ePitch
+        let ePitch = filterMapJust (`lookup` charPitches) eKey
+        bPitch <- stepper PC ePitch
 
-    let bNote = Note <$> bOctave <*> bPitch
+        let bNote = Note <$> bOctave <*> bPitch
 
-    eNoteChanged <- changes bNote
-    reactimate' $ fmap (\n -> putStrLn ("Now playing " ++ show n))
-                 <$> eNoteChanged
+        eNoteChanged <- changes bNote
+        reactimate' $ fmap (\n -> putStrLn ("Now playing " ++ show n))
+                     <$> eNoteChanged
 
-    eTick <- fromAddHandler addClockEvent
-    eTime <- accumE 0 (fmap (+) eTick)
-    reactimate (fmap (\t -> putStrLn ("Tick " ++ show t)) eTime)
+    timeHandling = do
+        eTick <- fromAddHandler addClockEvent
+        eTime <- accumE 0 (fmap (+) eTick)
+        reactimate (fmap (\t -> putStrLn ("Tick " ++ show t)) eTime)
 
 main :: IO ()
 main = do
