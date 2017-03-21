@@ -58,7 +58,7 @@ getOctaveChange c = case c of
     '-' -> Just (-1)
     _   -> Nothing
 
-makeNetworkDescription :: AddHandler Char -> AddHandler () -> MomentIO ()
+makeNetworkDescription :: AddHandler Char -> AddHandler Integer -> MomentIO ()
 makeNetworkDescription addKeyEvent addClockEvent = do
 
     eKey <- fromAddHandler addKeyEvent
@@ -74,8 +74,9 @@ makeNetworkDescription addKeyEvent addClockEvent = do
     reactimate' $ fmap (\n -> putStrLn ("Now playing " ++ show n))
                  <$> eNoteChanged
 
-    eTime <- fromAddHandler addClockEvent
-    reactimate (putStrLn "tick" <$ eTime)
+    eTick <- fromAddHandler addClockEvent
+    eTime <- accumE 0 (fmap (+) eTick)
+    reactimate (fmap (\t -> putStrLn ("Tick " ++ show t)) eTime)
 
 main :: IO ()
 main = do
@@ -85,5 +86,5 @@ main = do
     actuate network
     hSetEcho stdin False
     hSetBuffering stdin NoBuffering
-    _ <- forkIO (forever (threadDelay 1e6 >> fireClock ()))
+    _ <- forkIO (forever (threadDelay 1e5 >> fireClock 1))
     forever (getChar >>= fireKey)
