@@ -1,9 +1,12 @@
 {-# LANGUAGE LambdaCase        #-}
+{-# LANGUAGE MultiWayIf        #-}
 {-# LANGUAGE NumDecimals       #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell   #-}
 
 module Main where
+
+
 
 import Control.Concurrent
 import Control.Concurrent.Async
@@ -19,8 +22,13 @@ import Reactive.Banana.Frameworks as Frp
 
 data Player = Player
     { _score  :: Word
-    , _paddle :: Double
+    , _paddle :: Paddle
     }
+
+data Paddle = Paddle
+    { _pWidth  :: Double
+    , _pHeight :: Double
+    , _pPos    :: Vec2Cart }
 
 data Ball = Ball
     { _position :: Vec2Cart
@@ -42,6 +50,7 @@ data GameState = GameState
 
 makeLenses ''Player
 makeLenses ''Ball
+makeLenses ''Paddle
 makeLenses ''Vec2Cart
 makeLenses ''Vec2Rad
 makeLenses ''GameState
@@ -56,45 +65,60 @@ makeNetworkDescription
     -> MomentIO ()
 makeNetworkDescription vty addVtyEvent addClockTickEvent = do
     eVty <- fromAddHandler addVtyEvent
+    let eKey = flip mapMaybe eVty (\case
+            EvKey key modifiers -> Just (key, modifiers)
+            _other -> Nothing
+            )
 
     eTime <- do
         eTick <- fromAddHandler addClockTickEvent
         accumE (0 :: Int) (fmap (\_ time -> time + 1) eTick)
 
-    bGameState <- do
-        let eKey = flip fmap eVty (\case
-                EvKey key modifiers -> Just (key, modifiers)
-                _other -> Nothing
-                )
-        bKey <- stepper Nothing eKey
-        let eUpdateGameState = (,) <$> bKey <@> eTime
-        accumB initialGameState (fmap updateGameState eUpdateGameState)
+    let ePaddleMove :: Frp.Event (GameState -> GameState)
+        ePaddleMove = fmap (\(key, _mod) -> movePaddle key) eKey
 
-    let eRender = bGameState <@ eTime
+    let eBallMove :: Frp.Event (GameState -> GameState)
+        eBallMove = fmap (const moveBall) eTime
 
-    -- reactimate (fmap (\_ -> putStrLn "tick") eTime)
-    reactimate (flip fmap eRender (update vty . render))
+    eRender <- accumE initialGameState (unions [ePaddleMove, eBallMove])
+
+    reactimate (fmap (update vty . render) eRender)
 
 mapMaybe :: (a -> Maybe b) -> Frp.Event a -> Frp.Event b
 mapMaybe f es = filterJust (fmap f es)
 
-updateGameState :: (Maybe (Vty.Key, [Vty.Modifier]), time) -> GameState -> GameState
-updateGameState = \case
-    (Nothing, _time) -> moveBall
-    (Just (key, _modifiers), _time) -> moveBall . userInput key
-  where
-    userInput key s = case key of
-        KUp    -> over (leftPlayer . paddle) (subtract 1) s
-        KDown  -> over (leftPlayer . paddle) (+ 1) s
-        _other -> s
+movePaddle :: Vty.Key -> GameState -> GameState
+movePaddle = \case
+    KUp    -> over (leftPlayer . paddle . pPos . y) (subtract 1)
+    KDown  -> over (leftPlayer . paddle . pPos . y) (+ 1)
+    _other -> id
 
-    moveBall :: GameState -> GameState
-    moveBall s =
-        let Vec2Cart xPos yPos = view (ball . position) s
-            Vec2Rad magnitude angle = view (ball . velocity) s
-            newPos = Vec2Cart (xPos + magnitude * cos angle)
+moveBall :: GameState -> GameState
+moveBall = collision . inertia
+  where
+    collision = do
+      ballPos <- view (ball . position)
+      lPlayer <- view leftPlayer
+      rPlayer <- view rightPlayer
+      let mirrorBall = over (ball . velocity . phi) (pi -)
+      if | ballPos `isInside` lPlayer -> mirrorBall
+         | ballPos `isInside` rPlayer -> mirrorBall
+         | otherwise -> id
+
+    isInside :: Vec2Cart -> Player -> Bool
+    isInside pos player = insideX && insideY
+      where
+        insideX = let playerXL = view (paddle . pPos . x) player
+                      playerXR = playerXL + view (paddle . pWidth) player
+                  in view (x . to (\xx -> xx >= playerXL && xx <= playerXR)) pos
+        insideY = True
+
+    inertia = do
+        Vec2Cart xPos yPos <- view (ball . position)
+        Vec2Rad magnitude angle <- view (ball . velocity)
+        let newPos = Vec2Cart (xPos + magnitude * cos angle)
                               (yPos + magnitude * sin angle)
-        in set (ball . position) newPos s
+        set (ball . position) newPos
 
 main :: IO ()
 main = withVty standardIOConfig (\vty -> do
@@ -133,12 +157,18 @@ initialGameState :: GameState
 initialGameState = GameState
     { _leftPlayer = Player
         { _score = 0
-        , _paddle = 0 }
+        , _paddle = Paddle
+            { _pWidth = 1
+            , _pHeight = 10
+            , _pPos = Vec2Cart 0 0 } }
     , _rightPlayer = Player
         { _score = 0
-        , _paddle = 0 }
+        , _paddle = Paddle
+            { _pWidth = 1
+            , _pHeight = 10
+            , _pPos = Vec2Cart 40 0 } }
     , _ball = Ball
-        { _position = Vec2Cart 0 0
+        { _position = Vec2Cart 10 0
         , _velocity = Vec2Rad 1 0 }
     }
 
@@ -149,15 +179,20 @@ render gameState = picForLayers
     , renderRightPlayer
     ]
   where
-    renderLeftPlayer  = translate 2       0 (renderPaddle (view leftPlayer  gameState))
-    renderRightPlayer = translate (120-2) 0 (renderPaddle (view rightPlayer gameState))
+    renderLeftPlayer  = renderPaddle (view leftPlayer  gameState)
+    renderRightPlayer = renderPaddle (view rightPlayer gameState)
 
     renderPaddle :: Player -> Image
-    renderPaddle player = translate 0 yOffset paddleImage
+    renderPaddle player = translate xOffset yOffset paddleImage
       where
         style = mempty `withForeColor` white `withBackColor` black
-        yOffset = view (paddle . to round) player
-        paddleImage = charFill style 'x' (1 :: Int) 10 `horizJoin` charFill defAttr ' ' (1 :: Int) 10
+        xOffset = view (paddle . pPos . x . to round) player
+        yOffset = view (paddle . pPos . y . to round) player
+        paddleImage =
+            let viewPlayer l = view (paddle . l . to round) player :: Int
+            in horizCat
+                [ charFill style 'x' (viewPlayer pWidth) (viewPlayer pHeight)
+                , charFill defAttr ' ' 1 (viewPlayer pHeight) ]
 
     renderBall :: Ball -> Image
     renderBall b = translate (round (view (position . x) b))
