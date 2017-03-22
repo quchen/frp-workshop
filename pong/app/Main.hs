@@ -96,26 +96,34 @@ movePaddle = \case
     _other -> id
 
 moveBall :: GameState -> GameState
-moveBall = collision . inertia
+moveBall = collisionWithPaddle . collisionWithField . inertia
   where
-    collision = do
-      ballPos <- view (ball . position)
-      lPlayer <- view leftPlayer
-      rPlayer <- view rightPlayer
-      let mirrorBall = over (ball . velocity . phi) (pi -)
-      if | ballPos `isInside` lPlayer -> mirrorBall
-         | ballPos `isInside` rPlayer -> mirrorBall
-         | otherwise -> id
+    collisionWithField = do
+        ballPosY <- view (ball . position . y)
+        fieldLowerBound <- view fieldHeight
+        let mirrorBall = over (ball . velocity . phi) negate
+        if | ballPosY >= (fromIntegral fieldLowerBound + 1) -> mirrorBall
+           | ballPosY <= 1 -> mirrorBall
+           | otherwise -> id
 
-    isInside :: Vec2Cart -> Player -> Bool
-    isInside pos player = insideX && insideY
+    collisionWithPaddle = do
+        ballPos <- view (ball . position)
+        lPlayer <- view leftPlayer
+        rPlayer <- view rightPlayer
+        let mirrorBall = over (ball . velocity . phi) (pi -)
+        if | ballPos `collidesWith` lPlayer -> mirrorBall
+           | ballPos `collidesWith` rPlayer -> mirrorBall
+           | otherwise -> id
       where
-        insideX = let playerXL = view (paddle . pPos . x) player
-                      playerXR = playerXL + view (paddle . pWidth) player
-                  in view (x . to (\xx -> xx >= playerXL && xx <= playerXR)) pos
-        insideY = let playerYT = view (paddle . pPos . y) player
-                      playerYB = playerYT + view (paddle . pHeight) player
-                  in view (y . to (\yy -> yy >= playerYT && yy <= playerYB)) pos
+        collidesWith :: Vec2Cart -> Player -> Bool
+        collidesWith pos player = insideX && insideY
+          where
+            insideX = let playerXL = view (paddle . pPos . x) player
+                          playerXR = playerXL + view (paddle . pWidth) player
+                      in view (x . to (\xx -> xx >= playerXL && xx <= playerXR)) pos
+            insideY = let playerYT = view (paddle . pPos . y) player
+                          playerYB = playerYT + view (paddle . pHeight) player
+                      in view (y . to (\yy -> yy >= playerYT && yy <= playerYB)) pos
 
     inertia = do
         Vec2Cart xPos yPos <- view (ball . position)
@@ -173,7 +181,7 @@ initialGameState (fWidth, fHeight) paddleHeight = GameState
             , _pPos = Vec2Cart (fromIntegral fWidth) (fromIntegral fHeight / 2 - fromIntegral paddleHeight / 2) } }
     , _ball = Ball
         { _position = Vec2Cart 5 (fromIntegral fHeight / 2)
-        , _velocity = Vec2Rad 1 0.02 }
+        , _velocity = Vec2Rad 1 0.05 }
     , _fieldWidth = fWidth
     , _fieldHeight = fHeight
     }
