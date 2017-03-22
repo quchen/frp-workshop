@@ -27,6 +27,8 @@ executable pong-exe
         , pong
         , reactive-banana
         , lens
+        , vty
+        , text
         , async
     hs-source-dirs:      app
     main-is:             Main.hs
