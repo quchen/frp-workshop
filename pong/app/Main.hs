@@ -1,13 +1,15 @@
+{-# LANGUAGE LambdaCase      #-}
 {-# LANGUAGE NumDecimals     #-}
 {-# LANGUAGE TemplateHaskell #-}
 
 module Main where
 
 import Control.Concurrent
+import Control.Concurrent.Async
 import Control.Lens
 import Control.Monad
+import Data.Function
 import Reactive.Banana
-import Reactive.Banana.Combinators
 import Reactive.Banana.Frameworks
 import System.IO
 
@@ -42,27 +44,42 @@ renderToTerminal :: GameState -> IO ()
 renderToTerminal = error "TODO: renderToTerminal"
 
 makeNetworkDescription
-    :: AddHandler Char
-    -> AddHandler Integer
+    :: AddHandler Char -- ^ User input
+    -> AddHandler ()   -- ^ Clock tick
     -> MomentIO ()
-makeNetworkDescription addKeyEvent addClockEvent = do
+makeNetworkDescription addKeyEvent addClockTickEvent = do
     eKey <- fromAddHandler addKeyEvent
 
     eTime <- do
-        eTick <- fromAddHandler addClockEvent
-        accumE 0 (fmap (+) eTick)
+        eTick <- fromAddHandler addClockTickEvent
+        accumE (0 :: Int) (fmap (\_ time -> time + 1) eTick)
 
-    error "TODO: render on time tick, but allow key events at any time"
-
+    reactimate (fmap (\time -> putStrLn ("Time: " ++ show time)) eTime)
+    reactimate (fmap (\key -> putStrLn ("Key press: " ++ show key)) eKey)
 
 main :: IO ()
 main = do
     (addKeyEvent, fireKey) <- newAddHandler
-    (addClockEvent, fireClock) <- newAddHandler
-    network <- compile (makeNetworkDescription addKeyEvent addClockEvent)
+    (addClockTickEvent, fireClock) <- newAddHandler
+    network <- compile (makeNetworkDescription addKeyEvent addClockTickEvent)
     actuate network
+
     hSetEcho stdin False
     hSetBuffering stdin NoBuffering
-    _ <- forkIO (let fps = 60
-                 in forever (threadDelay (1e6 `quot` fps) >> fireClock 1))
-    forever (getChar >>= fireKey)
+    withClock 30 (fireClock ()) (
+        fix (\loop -> getChar >>= \case
+            'q' -> putStrLn "Quit"
+            key -> fireKey key >> loop ))
+
+withClock
+    :: Int  -- ^ Ticks per second
+    -> IO a -- ^ Action to run each tick
+    -> IO b -- ^ Action to perform with the clock ticking
+    -> IO b
+withClock ticksPerSecond tickAction body = do
+    thread <- async (forever (do
+        threadDelay (1e6 `quot` ticksPerSecond)
+        tickAction ))
+    result <- body
+    cancel thread
+    pure result
