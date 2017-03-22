@@ -111,7 +111,9 @@ moveBall = collision . inertia
         insideX = let playerXL = view (paddle . pPos . x) player
                       playerXR = playerXL + view (paddle . pWidth) player
                   in view (x . to (\xx -> xx >= playerXL && xx <= playerXR)) pos
-        insideY = True
+        insideY = let playerYT = view (paddle . pPos . y) player
+                      playerYB = playerYT + view (paddle . pHeight) player
+                  in view (y . to (\yy -> yy >= playerYT && yy <= playerYB)) pos
 
     inertia = do
         Vec2Cart xPos yPos <- view (ball . position)
