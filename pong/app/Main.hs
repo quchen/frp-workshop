@@ -69,25 +69,25 @@ makeNetworkDescription addKeyEvent addClockTickEvent = do
     reactimate (fmap (\_gs -> putStrLn "Rendering frame!") eRender)
 
 updateGameState :: (Int, Char) -> GameState -> GameState
-updateGameState (time, key) s = undefined time key s
+updateGameState (_time, key) s = error "Update game state" key s
 
 main :: IO ()
 main = do
 
---     cfg <- standardIOConfig
---     vty <- mkVty cfg
---     let line0 = string (defAttr ` withForeColor ` green) "first line"
---         line1 = string (defAttr ` withBackColor ` blue) "second line"
---         img = backgroundFill 30 20 <> line0 <-> line1
---         pic = picForImage img
---     -- let image = render initialGameState
---     --     pic = picForImage image
---     update vty pic
---     e <- nextEvent vty
---     shutdown vty
---     print ("Last event was: " ++ show e)
---
--- foo = do
+    cfg <- standardIOConfig
+    vty <- mkVty cfg
+    -- let line0 = string (defAttr ` withForeColor ` green) "first line"
+    --     line1 = string (defAttr ` withBackColor ` blue) "second line"
+    --     img = backgroundFill 30 20 <> line0 <-> line1
+    --     pic = picForImage img
+    let image = render initialGameState
+        pic = picForImage image
+    update vty pic
+    e <- nextEvent vty
+    shutdown vty
+    print ("Last event was: " ++ show e)
+
+foo = do
 
 
     (addKeyEvent, fireKey) <- newAddHandler
@@ -97,7 +97,7 @@ main = do
 
     hSetEcho stdin False
     hSetBuffering stdin NoBuffering
-    withClock 30 (fireClock ()) (
+    withClock 10 (fireClock ()) (
         fix (\loop -> getChar >>= \case
             'q' -> putStrLn "Quit"
             key -> fireKey key >> loop ))
@@ -129,7 +129,12 @@ initialGameState = GameState
     }
 
 render :: GameState -> Image
-render s = error "TODO" s
+render gameState = horizJoin (translate 2      0 (renderPaddle (view leftPlayer gameState)))
+                             (translate (60-2) 0 (renderPaddle (view rightPlayer gameState)))
   where
     renderPaddle :: Player -> Image
-    renderPaddle = error "TODO"
+    renderPaddle player = translate 0 yOffset paddleImage
+      where
+        style = mempty `withForeColor` white `withBackColor` black
+        yOffset = view (paddle . to round) player
+        paddleImage = charFill style 'x' (1 :: Int) 5
