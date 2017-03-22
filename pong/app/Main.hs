@@ -46,6 +46,8 @@ data GameState = GameState
     { _leftPlayer  :: Player
     , _rightPlayer :: Player
     , _ball        :: Ball
+    , _fieldWidth  :: Int
+    , _fieldHeight :: Int
     }
 
 makeLenses ''Player
@@ -80,7 +82,7 @@ makeNetworkDescription vty addVtyEvent addClockTickEvent = do
     let eBallMove :: Frp.Event (GameState -> GameState)
         eBallMove = fmap (const moveBall) eTime
 
-    eRender <- accumE initialGameState (unions [ePaddleMove, eBallMove])
+    eRender <- accumE (initialGameState (100, 30) 10) (unions [ePaddleMove, eBallMove])
 
     reactimate (fmap (update vty . render) eRender)
 
@@ -132,7 +134,7 @@ main = withVty standardIOConfig (\vty -> do
         actuate network
         pure (fireVty, fireClock)
 
-    withClock 30 (fireClock ()) (
+    withClock 60 (fireClock ()) (
         fix (\loop -> nextEvent vty >>= \case
             EvKey KEsc _ -> pure ()
             EvKey (KChar 'q') _ -> pure ()
@@ -155,23 +157,25 @@ withClock ticksPerSecond tickAction body = bracket acquire release (const body)
         tickAction ))
     release = cancel
 
-initialGameState :: GameState
-initialGameState = GameState
+initialGameState :: (Int, Int) -> Int -> GameState
+initialGameState (fWidth, fHeight) paddleHeight = GameState
     { _leftPlayer = Player
         { _score = 0
         , _paddle = Paddle
             { _pWidth = 1
-            , _pHeight = 10
-            , _pPos = Vec2Cart 0 0 } }
+            , _pHeight = fromIntegral paddleHeight
+            , _pPos = Vec2Cart 1 (fromIntegral fHeight / 2 - fromIntegral paddleHeight / 2) } }
     , _rightPlayer = Player
         { _score = 0
         , _paddle = Paddle
             { _pWidth = 1
-            , _pHeight = 10
-            , _pPos = Vec2Cart 40 0 } }
+            , _pHeight = fromIntegral paddleHeight * 2
+            , _pPos = Vec2Cart (fromIntegral fWidth) (fromIntegral fHeight / 2 - fromIntegral paddleHeight / 2) } }
     , _ball = Ball
-        { _position = Vec2Cart 10 0
-        , _velocity = Vec2Rad 1 0 }
+        { _position = Vec2Cart 5 (fromIntegral fHeight / 2)
+        , _velocity = Vec2Rad 1 0.02 }
+    , _fieldWidth = fWidth
+    , _fieldHeight = fHeight
     }
 
 render :: GameState -> Picture
@@ -179,22 +183,30 @@ render gameState = picForLayers
     [ renderBall (view ball gameState)
     , renderLeftPlayer
     , renderRightPlayer
+    , renderGameField
     ]
   where
     renderLeftPlayer  = renderPaddle (view leftPlayer  gameState)
     renderRightPlayer = renderPaddle (view rightPlayer gameState)
 
+    renderGameField = horizCat
+        [ charFill defAttr '|' 1 (view fieldHeight gameState + 2)
+        , vertCat
+            [ charFill defAttr '-' (view fieldWidth gameState) 1
+            , charFill defAttr ' ' (view fieldWidth gameState) (view fieldHeight gameState)
+            , charFill defAttr '-' (view fieldWidth gameState) 1
+            ]
+        , charFill defAttr '|' 1 (view fieldHeight gameState + 2)
+        ]
+
     renderPaddle :: Player -> Image
     renderPaddle player = translate xOffset yOffset paddleImage
       where
-        style = mempty `withForeColor` white `withBackColor` black
         xOffset = view (paddle . pPos . x . to round) player
         yOffset = view (paddle . pPos . y . to round) player
         paddleImage =
             let viewPlayer l = view (paddle . l . to round) player :: Int
-            in horizCat
-                [ charFill style 'x' (viewPlayer pWidth) (viewPlayer pHeight)
-                , charFill defAttr ' ' 1 (viewPlayer pHeight) ]
+            in charFill defAttr '#' (viewPlayer pWidth) (viewPlayer pHeight)
 
     renderBall :: Ball -> Image
     renderBall b = translate (round (view (position . x) b))
