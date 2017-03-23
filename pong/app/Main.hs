@@ -137,7 +137,7 @@ collisionWithPaddle randomDouble = do
     rPlayer <- view rightPlayer
     let mirrorBall = over (ball . velocity . phi) (pi -)
                    . over (ball . velocity . r)   (1.1 *)
-    let angleNoise = (2 * pi * (randomDouble - 0.5)) / 36
+    let angleNoise = (2 * pi * (randomDouble - 0.5)) / 20
         noisyBall = over (ball . velocity . phi) (\angle ->
             let angle' = normalizeAngle (angle + angleNoise)
             in if angleAllowed angle'
@@ -191,7 +191,7 @@ opponent = do
 main :: IO ()
 main = withVty standardIOConfig (\vty -> do
 
-    let randomNumbers = randomRs (0,1 :: Double) (mkStdGen 0)
+    randomNumbers <- fmap (randomRs (0,1)) getStdGen
     (firePlayerEvent, fireClockEvent, firePhysicsEvent, fireOpponentEvent) <- do
         (addPlayerEvent, firePlayerEvent) <- newAddHandler
         (addPhysicsEvent, firePhysicsEvent) <- newAddHandler
