@@ -33,10 +33,9 @@ enemyMoveSpeed = PerSecond 10
 
 newtype PerSecond = PerSecond Int
 
-data Player = Player
-    { _score  :: Word
-    , _paddle :: Paddle
-    }
+data Score = Score
+    { _leftPlayer  :: Word
+    , _rightPlayer :: Word }
 
 data Paddle = Paddle
     { _pWidth  :: Double
@@ -56,8 +55,8 @@ data Vec2Rad = Vec2Rad
     , _phi :: Double }
 
 data GameState = GameState
-    { _leftPlayer  :: Player
-    , _rightPlayer :: Player
+    { _leftPaddle  :: Paddle
+    , _rightPaddle :: Paddle
     , _ball        :: Ball
     , _fieldWidth  :: Int
     , _fieldHeight :: Int
@@ -71,7 +70,7 @@ data ScoreEvent
     = LeftPlayerScores
     | RightPlayerScores
 
-makeLenses ''Player
+makeLenses ''Score
 makeLenses ''Ball
 makeLenses ''Paddle
 makeLenses ''Vec2Cart
@@ -98,7 +97,7 @@ makeNetworkDescription vty randomNumbers addPlayerEvent firePlayerEvent addRende
 
     let eScore = mapMaybe scoreWhenOutOfBounds (bGame <@ eRender)
 
-    reactimate (fmap (update vty . render) (bGame <@ eRender))
+    reactimate (fmap (update vty . render (Score 0 0)) (bGame <@ eRender))
     reactimate (fmap firePlayerEvent eOpponent)
     reactimate (fmap fireGameEvent eScore)
 
@@ -107,8 +106,8 @@ makeNetworkDescription vty randomNumbers addPlayerEvent firePlayerEvent addRende
     mkEPaddleMoves addEvent = do
         ePlayer <- fromAddHandler addEvent
         let playerEventToAction = \case
-                MoveLeftPaddle delta  -> movePaddle leftPlayer delta
-                MoveRightPaddle delta -> movePaddle rightPlayer delta
+                MoveLeftPaddle delta  -> movePaddle leftPaddle delta
+                MoveRightPaddle delta -> movePaddle rightPaddle delta
         pure (fmap playerEventToAction ePlayer)
 
     mkEGameTime addEvent = do
@@ -147,13 +146,13 @@ makeNetworkDescription vty randomNumbers addPlayerEvent firePlayerEvent addRende
 mapMaybe :: (a -> Maybe b) -> Frp.Event a -> Frp.Event b
 mapMaybe f es = filterJust (fmap f es)
 
-movePaddle :: Lens' GameState Player -> Int -> GameState -> GameState
-movePaddle player delta = do
-    top <- view (player . paddle . pPos . y)
-    bot <- (+ top) . view (player . paddle . pHeight)
+movePaddle :: Lens' GameState Paddle -> Int -> GameState -> GameState
+movePaddle paddle delta = do
+    top <- view (paddle . pPos . y)
+    bot <- (+ top) . view (paddle . pHeight)
     maxBot <- view (fieldHeight . to fromIntegral)
     let delta' = fromIntegral delta
-    over (player . paddle . pPos . y) (\yPos ->
+    over (paddle . pPos . y) (\yPos ->
         if | top + delta' <= 0 -> yPos
            | bot + delta' >= maxBot + 2 -> yPos -- +2 works. Don’t ask me why. :-|
            | otherwise -> yPos + delta' )
@@ -170,8 +169,8 @@ collisionWithField = do
 collisionWithPaddle :: Double -> GameState -> GameState
 collisionWithPaddle randomDouble = do
     ballPos <- view (ball . position)
-    lPlayer <- view leftPlayer
-    rPlayer <- view rightPlayer
+    lPaddle <- view leftPaddle
+    rPaddle <- view rightPaddle
     let mirrorBall = over (ball . velocity . phi) (pi -)
                    . over (ball . velocity . r)   (1.1 *)
     let angleNoise = (2 * pi * (randomDouble - 0.5)) / 20
@@ -180,8 +179,8 @@ collisionWithPaddle randomDouble = do
             in if angleAllowed angle'
                 then angle'
                 else angle )
-    if | ballPos `collidesWith` lPlayer -> noisyBall . mirrorBall
-       | ballPos `collidesWith` rPlayer -> noisyBall . mirrorBall
+    if | ballPos `collidesWith` lPaddle -> noisyBall . mirrorBall
+       | ballPos `collidesWith` rPaddle -> noisyBall . mirrorBall
        | otherwise -> id
   where
 
@@ -197,15 +196,15 @@ collisionWithPaddle randomDouble = do
         | xx < 0      = normalizeAngle (xx + 2 * pi)
         | otherwise   = xx
 
-    collidesWith :: Vec2Cart -> Player -> Bool
-    collidesWith pos player = insideX && insideY
+    collidesWith :: Vec2Cart -> Paddle -> Bool
+    collidesWith pos paddle = insideX && insideY
       where
-        insideX = let playerXL = view (paddle . pPos . x) player
-                      playerXR = playerXL + view (paddle . pWidth) player
-                  in view (x . to (\xx -> xx >= playerXL && xx <= playerXR)) pos
-        insideY = let playerYT = view (paddle . pPos . y) player
-                      playerYB = playerYT + view (paddle . pHeight) player
-                  in view (y . to (\yy -> yy >= playerYT && yy <= playerYB)) pos
+        insideX = let paddleXL = view (pPos . x) paddle
+                      paddleXR = paddleXL + view pWidth paddle
+                  in view (x . to (\xx -> xx >= paddleXL && xx <= paddleXR)) pos
+        insideY = let paddleYT = view (pPos . y) paddle
+                      paddleYB = paddleYT + view pHeight paddle
+                  in view (y . to (\yy -> yy >= paddleYT && yy <= paddleYB)) pos
 
 inertia :: GameState -> GameState
 inertia = do
@@ -218,8 +217,8 @@ inertia = do
 opponent :: GameState -> Maybe PlayerEvent
 opponent = do
     yBall <- view (ball . position . y)
-    paddleTop <- view (rightPlayer . paddle . pPos . y)
-    paddleHeight <- view (rightPlayer . paddle . pHeight)
+    paddleTop <- view (rightPaddle . pPos . y)
+    paddleHeight <- view (rightPaddle . pHeight)
     let yPlayer = paddleTop + paddleHeight / 2
     pure (if | yBall < (yPlayer - 1) -> Just (MoveRightPaddle (-1))
              | yBall > (yPlayer + 1) -> Just (MoveRightPaddle 1)
@@ -284,18 +283,14 @@ withClock (PerSecond ps) tickAction body = bracket acquire release (const body)
 
 initialGameState :: (Int, Int) -> Int -> GameState
 initialGameState (fWidth, fHeight) paddleHeight = GameState
-    { _leftPlayer = Player
-        { _score = 0
-        , _paddle = Paddle
-            { _pWidth = 1
-            , _pHeight = paddleHeightD
-            , _pPos = Vec2Cart 1 (fHeightD / 2 - paddleHeightD / 2) } }
-    , _rightPlayer = Player
-        { _score = 0
-        , _paddle = Paddle
-            { _pWidth = 1
-            , _pHeight = paddleHeightD / 2
-            , _pPos = Vec2Cart fWidthD (fHeightD / 2 - paddleHeightD / 2) } }
+    { _leftPaddle = Paddle
+        { _pWidth = 1
+        , _pHeight = paddleHeightD
+        , _pPos = Vec2Cart 1 (fHeightD / 2 - paddleHeightD / 2) }
+    , _rightPaddle = Paddle
+        { _pWidth = 1
+        , _pHeight = paddleHeightD / 2
+        , _pPos = Vec2Cart fWidthD (fHeightD / 2 - paddleHeightD / 2) }
     , _ball = Ball
         { _position = Vec2Cart 5 (fHeightD / 2)
         , _velocity = Vec2Rad 0.1 0 }
@@ -306,8 +301,8 @@ initialGameState (fWidth, fHeight) paddleHeight = GameState
     [fWidthD, fHeightD, paddleHeightD]
       = map fromIntegral [fWidth, fHeight, paddleHeight] :: [Double]
 
-render :: GameState -> Picture
-render gameState = picForLayers
+render :: Score -> GameState -> Picture
+render score gameState = picForLayers
     [ renderBall (view ball gameState)
     , renderScore
     , renderLeftPlayer
@@ -315,8 +310,8 @@ render gameState = picForLayers
     , renderGameField
     ]
   where
-    renderLeftPlayer  = renderPaddle (view leftPlayer  gameState)
-    renderRightPlayer = renderPaddle (view rightPlayer gameState)
+    renderLeftPlayer  = renderPaddle (view leftPaddle  gameState)
+    renderRightPlayer = renderPaddle (view rightPaddle gameState)
 
     renderGameField = horizCat
         [ vertCat
@@ -336,13 +331,13 @@ render gameState = picForLayers
             ]
         ]
 
-    renderPaddle :: Player -> Image
-    renderPaddle player = translate xOffset yOffset paddleImage
+    renderPaddle :: Paddle -> Image
+    renderPaddle paddle = translate xOffset yOffset paddleImage
       where
-        xOffset = view (paddle . pPos . x . to round) player
-        yOffset = view (paddle . pPos . y . to round) player
+        xOffset = view (pPos . x . to round) paddle
+        yOffset = view (pPos . y . to round) paddle
         paddleImage =
-            let viewPlayer l = view (paddle . l . to round) player :: Int
+            let viewPlayer l = view (l . to round) paddle :: Int
             in charFill defAttr '█' (viewPlayer pWidth) (viewPlayer pHeight)
 
     renderBall :: Ball -> Image
@@ -353,8 +348,8 @@ render gameState = picForLayers
     renderScore :: Image
     renderScore =
         let halfFieldWidth = view (fieldWidth . to (`quot` 2)) gameState
-            scoreLeft  = view (leftPlayer . score) gameState
-            scoreRight = view (rightPlayer . score) gameState
+            scoreLeft  = view leftPlayer score
+            scoreRight = view rightPlayer score
             offset = halfFieldWidth - length (show scoreLeft)
             displayScore = show scoreLeft ++ ":" ++ show scoreRight
         in  translate offset 1 (string defAttr displayScore)
