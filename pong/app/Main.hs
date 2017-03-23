@@ -160,9 +160,9 @@ collisionWithPaddle randomDouble = do
        | otherwise -> id
   where
 
-    angleAllowed xx = between (deg2rad (-80)) (deg2rad 80)  xx
-                   || between (deg2rad 100)   (deg2rad 260) xx
-    deg2rad xx = normalizeAngle (xx * 2 * pi / 360)
+    angleAllowed xx = not (between (deg2rad (90-10))  (deg2rad (90+10))  xx)
+                   && not (between (deg2rad (270-10)) (deg2rad (270+10)) xx)
+    deg2rad xx = xx * 2 * pi / 360
 
     between lo hi xx | lo > hi = between hi lo xx
     between lo hi xx = xx >= lo && xx <= hi
