@@ -18,6 +18,7 @@ import Data.Function
 import Graphics.Vty               as Vty
 import Reactive.Banana            as Frp
 import Reactive.Banana.Frameworks as Frp
+import System.Random
 
 
 
@@ -64,13 +65,14 @@ makeLenses ''GameState
 
 makeNetworkDescription
     :: Vty                    -- ^ Vty to render to
+    -> [Double]               -- ^ Infinite supply of random values in range 0..1
     -> AddHandler PlayerEvent -- ^ User input
     -> (PlayerEvent -> IO ()) -- ^ Fire player events
     -> AddHandler ()          -- ^ Render clock tick
     -> AddHandler ()          -- ^ Physics clock tick
     -> AddHandler ()          -- ^ Opponent clock tick
     -> MomentIO ()
-makeNetworkDescription vty addPlayerEvent firePlayerEvent addRenderEvent addPhysicsEvent addOpponentEvent = do
+makeNetworkDescription vty randomNumbers addPlayerEvent firePlayerEvent addRenderEvent addPhysicsEvent addOpponentEvent = do
 
     ePlayer <- fromAddHandler addPlayerEvent
     let ePaddleMove :: Frp.Event (GameState -> GameState)
@@ -81,10 +83,14 @@ makeNetworkDescription vty addPlayerEvent firePlayerEvent addRenderEvent addPhys
     eGameTime <- do
         eTick <- fromAddHandler addPhysicsEvent
         accumE (0 :: Int) (fmap (\_ time -> time + 1) eTick)
+    bRandom <-
+        let drawRandom _time (_current, nextRandom : doubles) = (nextRandom, doubles)
+            drawRandom _ (_, []) = error "Finite supply of randoms exhausted"
+        in (fmap . fmap) fst (accumB (0, randomNumbers) (fmap drawRandom eGameTime))
     let eInertia, eCollisionWithField, eCollisionWithPaddle :: Frp.Event (GameState -> GameState)
         eInertia = fmap (const inertia) eGameTime
         eCollisionWithField = fmap (const collisionWithField) eGameTime
-        eCollisionWithPaddle = fmap (const collisionWithPaddle) eGameTime
+        eCollisionWithPaddle = fmap collisionWithPaddle (bRandom <@ eGameTime)
 
     bGame <- accumB (initialGameState (100, 30) 10) (unions
         [ ePaddleMove
@@ -124,17 +130,24 @@ collisionWithField = do
        | ballPosY <= 1 -> mirrorBall
        | otherwise -> id
 
-collisionWithPaddle :: GameState -> GameState
-collisionWithPaddle = do
+collisionWithPaddle :: Double -> GameState -> GameState
+collisionWithPaddle randomDouble = do
     ballPos <- view (ball . position)
     lPlayer <- view leftPlayer
     rPlayer <- view rightPlayer
     let mirrorBall = over (ball . velocity . phi) (pi -)
                    . over (ball . velocity . r)   (1.1 *)
-    if | ballPos `collidesWith` lPlayer -> mirrorBall
-       | ballPos `collidesWith` rPlayer -> mirrorBall
+    let angleNoise = (2 * pi * (randomDouble - 0.5)) / 36
+        noisyBall = over (ball . velocity . phi) (+ angleNoise)
+            -- if | between 80 100 (angle + randomDouble) -> angle
+            --    | between -80 -100 (angle + randomDouble) -> angle
+            --    | otherwise -> angle + randomDouble
+    if | ballPos `collidesWith` lPlayer -> noisyBall . mirrorBall
+       | ballPos `collidesWith` rPlayer -> noisyBall . mirrorBall
        | otherwise -> id
   where
+    between lo hi xx = xx >= lo && xx <= hi
+
     collidesWith :: Vec2Cart -> Player -> Bool
     collidesWith pos player = insideX && insideY
       where
@@ -166,6 +179,7 @@ opponent = do
 main :: IO ()
 main = withVty standardIOConfig (\vty -> do
 
+    let randomNumbers = randomRs (0,1 :: Double) (mkStdGen 0)
     (firePlayerEvent, fireClockEvent, firePhysicsEvent, fireOpponentEvent) <- do
         (addPlayerEvent, firePlayerEvent) <- newAddHandler
         (addPhysicsEvent, firePhysicsEvent) <- newAddHandler
@@ -174,6 +188,7 @@ main = withVty standardIOConfig (\vty -> do
         network <- compile
             (makeNetworkDescription
                 vty
+                randomNumbers
                 addPlayerEvent
                 firePlayerEvent
                 addClockTickEvent

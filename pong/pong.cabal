@@ -25,11 +25,13 @@ executable pong-exe
     build-depends:
           base
         , pong
-        , reactive-banana
-        , lens
-        , vty
-        , text
+
         , async
+        , lens
+        , random
+        , reactive-banana
+        , text
+        , vty
     hs-source-dirs:      app
     main-is:             Main.hs
     ghc-options:         -threaded -rtsopts -with-rtsopts=-N -Wall
