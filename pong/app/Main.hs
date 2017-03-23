@@ -70,6 +70,10 @@ data ScoreEvent
     = LeftPlayerScores
     | RightPlayerScores
 
+data RenderTick = RenderTick
+data PhysicsTick = PhysicsTick
+data OpponentTick = OpponentTick
+
 makeLenses ''Score
 makeLenses ''Ball
 makeLenses ''Paddle
@@ -82,9 +86,9 @@ makeNetworkDescription
     -> [Double]                -- ^ Infinite supply of random values in range 0..1
     -> AddHandler PlayerEvent  -- ^ User input
     -> Frp.Handler PlayerEvent -- ^ Fire player events
-    -> AddHandler ()           -- ^ Render clock tick
-    -> AddHandler ()           -- ^ Physics clock tick
-    -> AddHandler ()           -- ^ Opponent clock tick
+    -> AddHandler RenderTick   -- ^ Render clock tick
+    -> AddHandler PhysicsTick  -- ^ Physics clock tick
+    -> AddHandler OpponentTick -- ^ Opponent clock tick
     -> MomentIO ()
 makeNetworkDescription
     vty
@@ -101,12 +105,11 @@ makeNetworkDescription
     eGameTime <- mkEGameTime addPhysicsEvent
     ePhysicsChange <- mkEPhysics eGameTime randomNumbers
     (bGame, fireGameEvent) <- mkBGame [ePaddleMove, ePhysicsChange]
-    eOpponent <- mkEOpponent addOpponentEvent bGame
-
 
     do eRender <- fromAddHandler addRenderEvent
        reactimate (fmap (update vty . render (Score 0 0)) (bGame <@ eRender))
-    reactimate (fmap firePlayerEvent eOpponent)
+    do eOpponent <- mkEOpponent addOpponentEvent bGame
+       reactimate (fmap firePlayerEvent eOpponent)
     do let eScore = mapMaybe scoreWhenOutOfBounds (bGame <@ eGameTime)
        reactimate (fmap fireGameEvent eScore)
 
@@ -262,9 +265,9 @@ main = withVty standardIOConfig (\vty -> do
         actuate network
         pure (firePlayerEvent, fireRenderEvent, firePhysicsEvent, fireOpponentEvent)
 
-    withClock renderSpeed fireRenderEvent (
-        withClock physicsSpeed firePhysicsEvent (
-            withClock enemyMoveSpeed fireOpponentEvent (
+    withClock renderSpeed (fireRenderEvent RenderTick) (
+        withClock physicsSpeed (firePhysicsEvent PhysicsTick) (
+            withClock enemyMoveSpeed (fireOpponentEvent OpponentTick) (
                 fix (\loop -> nextEvent vty >>= \case
                     EvKey KEsc _        -> pure ()
                     EvKey (KChar 'q') _ -> pure ()
@@ -279,15 +282,15 @@ withVty :: IO Config -> (Vty -> IO a) -> IO a
 withVty mkConfig = bracket (mkConfig >>= mkVty) shutdown
 
 withClock
-    :: PerSecond    -- ^ Tick periodicity
-    -> (() -> IO a) -- ^ Action to run each tick
-    -> IO b         -- ^ Action to perform with the clock ticking
-    -> IO b
+    :: PerSecond     -- ^ Tick periodicity
+    -> IO tickAction -- ^ Action to run each tick
+    -> IO body       -- ^ Action to perform with the clock ticking
+    -> IO body
 withClock (PerSecond ps) tickAction body = bracket acquire release (const body)
   where
     acquire = async (forever (do
         threadDelay (1e6 `quot` ps)
-        tickAction () ))
+        tickAction ))
     release = cancel
 
 initialGameState :: (Int, Int) -> Int -> GameState
