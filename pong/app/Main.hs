@@ -138,15 +138,27 @@ collisionWithPaddle randomDouble = do
     let mirrorBall = over (ball . velocity . phi) (pi -)
                    . over (ball . velocity . r)   (1.1 *)
     let angleNoise = (2 * pi * (randomDouble - 0.5)) / 36
-        noisyBall = over (ball . velocity . phi) (+ angleNoise)
-            -- if | between 80 100 (angle + randomDouble) -> angle
-            --    | between -80 -100 (angle + randomDouble) -> angle
-            --    | otherwise -> angle + randomDouble
+        noisyBall = over (ball . velocity . phi) (\angle ->
+            let angle' = normalizeAngle (angle + angleNoise)
+            in if angleAllowed angle'
+                then angle'
+                else angle )
     if | ballPos `collidesWith` lPlayer -> noisyBall . mirrorBall
        | ballPos `collidesWith` rPlayer -> noisyBall . mirrorBall
        | otherwise -> id
   where
+
+    angleAllowed xx = between (deg2rad (-80)) (deg2rad 80)  xx
+                   || between (deg2rad 100)   (deg2rad 260) xx
+    deg2rad xx = xx * 2 * pi / 360
+
+    between lo hi xx | lo > hi = between hi lo xx
     between lo hi xx = xx >= lo && xx <= hi
+
+    normalizeAngle xx
+        | xx > 2 * pi = normalizeAngle (xx - 2 * pi)
+        | xx < 0      = normalizeAngle (xx + 2 * pi)
+        | otherwise   = xx
 
     collidesWith :: Vec2Cart -> Player -> Bool
     collidesWith pos player = insideX && insideY
