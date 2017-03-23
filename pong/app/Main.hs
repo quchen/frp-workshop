@@ -227,7 +227,9 @@ main = withVty standardIOConfig (\vty -> do
                     EvKey KEsc _        -> pure ()
                     EvKey (KChar 'q') _ -> pure ()
                     EvKey KUp _         -> firePlayerEvent (MoveLeftPaddle (-1)) >> loop
+                    EvKey (KChar 'k') _ -> firePlayerEvent (MoveLeftPaddle (-1)) >> loop
                     EvKey KDown _       -> firePlayerEvent (MoveLeftPaddle   1 ) >> loop
+                    EvKey (KChar 'j') _ -> firePlayerEvent (MoveLeftPaddle   1 ) >> loop
                     _otherwise          -> loop
                     )))))
 
@@ -262,7 +264,7 @@ initialGameState (fWidth, fHeight) paddleHeight = GameState
             , _pPos = Vec2Cart fWidthD (fHeightD / 2 - paddleHeightD / 2) } }
     , _ball = Ball
         { _position = Vec2Cart 5 (fHeightD / 2)
-        , _velocity = Vec2Rad 0.1 0.05 }
+        , _velocity = Vec2Rad 0.1 0 }
     , _fieldWidth = fWidth
     , _fieldHeight = fHeight
     }
