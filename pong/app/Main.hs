@@ -244,13 +244,21 @@ render gameState = picForLayers
     renderRightPlayer = renderPaddle (view rightPlayer gameState)
 
     renderGameField = horizCat
-        [ charFill defAttr '|' 1 (view fieldHeight gameState + 2)
-        , vertCat
-            [ charFill defAttr '-' (view fieldWidth gameState) 1
-            , charFill defAttr ' ' (view fieldWidth gameState) (view fieldHeight gameState)
-            , charFill defAttr '-' (view fieldWidth gameState) 1
+        [ vertCat
+            [ char defAttr '┌'
+            , charFill defAttr '│' 1 (view fieldHeight gameState)
+            , char defAttr '└'
             ]
-        , charFill defAttr '|' 1 (view fieldHeight gameState + 2)
+        , vertCat
+            [ charFill defAttr '─' (view fieldWidth gameState) 1
+            , charFill defAttr ' ' (view fieldWidth gameState) (view fieldHeight gameState)
+            , charFill defAttr '─' (view fieldWidth gameState) 1
+            ]
+        , vertCat
+            [ char defAttr '┐'
+            , charFill defAttr '│' 1 (view fieldHeight gameState)
+            , char defAttr '┘'
+            ]
         ]
 
     renderPaddle :: Player -> Image
@@ -260,9 +268,9 @@ render gameState = picForLayers
         yOffset = view (paddle . pPos . y . to round) player
         paddleImage =
             let viewPlayer l = view (paddle . l . to round) player :: Int
-            in charFill defAttr '#' (viewPlayer pWidth) (viewPlayer pHeight)
+            in charFill defAttr '█' (viewPlayer pWidth) (viewPlayer pHeight)
 
     renderBall :: Ball -> Image
     renderBall b = translate (round (view (position . x) b))
                              (round (view (position . y) b))
-                             (text' defAttr "o")
+                             (char defAttr '●')
