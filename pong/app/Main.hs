@@ -252,10 +252,10 @@ scoreWhenOutOfBounds = do
              | otherwise      -> Nothing )
 
 main :: IO ()
-main = withVty standardIOConfig (\vty -> do
-
-    randomNumbers <- fmap (randomRs (0,1)) getStdGen
-    (firePlayerEvent, fireRenderEvent, firePhysicsEvent, fireOpponentEvent) <- do
+main = withVty standardIOConfig (\vty -> setupNetwork vty >>= runPong vty)
+  where
+    setupNetwork vty = do
+        randomNumbers <- fmap (randomRs (0,1)) getStdGen
         (addPlayerEvent,   firePlayerEvent  ) <- newAddHandler
         (addPhysicsEvent,  firePhysicsEvent ) <- newAddHandler
         (addRenderEvent,   fireRenderEvent  ) <- newAddHandler
@@ -272,19 +272,20 @@ main = withVty standardIOConfig (\vty -> do
         actuate network
         pure (firePlayerEvent, fireRenderEvent, firePhysicsEvent, fireOpponentEvent)
 
-    let renderClocked = withClock renderSpeed (fireRenderEvent RenderTick)
-        physicsClocked = withClock physicsSpeed (firePhysicsEvent PhysicsTick)
-        opponentClocked = withClock enemyMoveSpeed (fireOpponentEvent OpponentTick)
-        clocked = renderClocked . physicsClocked . opponentClocked
-    clocked (fix (\loop -> nextEvent vty >>= \case
-        EvKey KEsc _        -> pure ()
-        EvKey (KChar 'q') _ -> pure ()
-        EvKey KUp _         -> firePlayerEvent (MoveLeftPaddle (-1)) >> loop
-        EvKey (KChar 'k') _ -> firePlayerEvent (MoveLeftPaddle (-1)) >> loop
-        EvKey KDown _       -> firePlayerEvent (MoveLeftPaddle   1 ) >> loop
-        EvKey (KChar 'j') _ -> firePlayerEvent (MoveLeftPaddle   1 ) >> loop
-        _otherwise          -> loop
-        )))
+    runPong vty (firePlayerEvent, fireRenderEvent, firePhysicsEvent, fireOpponentEvent)
+      = let renderClocked = withClock renderSpeed (fireRenderEvent RenderTick)
+            physicsClocked = withClock physicsSpeed (firePhysicsEvent PhysicsTick)
+            opponentClocked = withClock enemyMoveSpeed (fireOpponentEvent OpponentTick)
+            clocked = renderClocked . physicsClocked . opponentClocked
+        in clocked (fix (\loop -> nextEvent vty >>= \case
+            EvKey KEsc _        -> pure ()
+            EvKey (KChar 'q') _ -> pure ()
+            EvKey KUp _         -> firePlayerEvent (MoveLeftPaddle (-1)) >> loop
+            EvKey (KChar 'k') _ -> firePlayerEvent (MoveLeftPaddle (-1)) >> loop
+            EvKey KDown _       -> firePlayerEvent (MoveLeftPaddle   1 ) >> loop
+            EvKey (KChar 'j') _ -> firePlayerEvent (MoveLeftPaddle   1 ) >> loop
+            _otherwise          -> loop
+            ))
 
 withVty :: IO Config -> (Vty -> IO a) -> IO a
 withVty mkConfig = bracket (mkConfig >>= mkVty) shutdown
