@@ -78,10 +78,12 @@ makeNetworkDescription vty addPlayerEvent addClockTickEvent = do
     let ePaddleMove :: Frp.Event (GameState -> GameState)
         ePaddleMove = fmap (\(MovePaddle delta) -> movePaddle delta) ePlayer
 
-    let eBallMove :: Frp.Event (GameState -> GameState)
-        eBallMove = fmap (const moveBall) eTime
+    let eInertia, eCollisionWithField, eCollisionWithPaddle:: Frp.Event (GameState -> GameState)
+        eInertia = fmap (const inertia) eTime
+        eCollisionWithField = fmap (const collisionWithField) eTime
+        eCollisionWithPaddle = fmap (const collisionWithPaddle) eTime
 
-    eRender <- accumE (initialGameState (100, 30) 10) (unions [ePaddleMove, eBallMove])
+    eRender <- accumE (initialGameState (100, 30) 10) (unions [ePaddleMove, eInertia, eCollisionWithField, eCollisionWithPaddle])
 
     reactimate (fmap (update vty . render) eRender)
 
@@ -91,42 +93,42 @@ mapMaybe f es = filterJust (fmap f es)
 movePaddle :: Int -> GameState -> GameState
 movePaddle delta = over (leftPlayer . paddle . pPos . y) (+ fromIntegral delta)
 
-moveBall :: GameState -> GameState
-moveBall = collisionWithPaddle . collisionWithField . inertia
+collisionWithField :: GameState -> GameState
+collisionWithField = do
+    ballPosY <- view (ball . position . y)
+    fieldLowerBound <- view fieldHeight
+    let mirrorBall = over (ball . velocity . phi) negate
+    if | ballPosY >= (fromIntegral fieldLowerBound + 1) -> mirrorBall
+        | ballPosY <= 1 -> mirrorBall
+        | otherwise -> id
+
+collisionWithPaddle :: GameState -> GameState
+collisionWithPaddle = do
+    ballPos <- view (ball . position)
+    lPlayer <- view leftPlayer
+    rPlayer <- view rightPlayer
+    let mirrorBall = over (ball . velocity . phi) (pi -)
+    if | ballPos `collidesWith` lPlayer -> mirrorBall
+        | ballPos `collidesWith` rPlayer -> mirrorBall
+        | otherwise -> id
   where
-    collisionWithField = do
-        ballPosY <- view (ball . position . y)
-        fieldLowerBound <- view fieldHeight
-        let mirrorBall = over (ball . velocity . phi) negate
-        if | ballPosY >= (fromIntegral fieldLowerBound + 1) -> mirrorBall
-           | ballPosY <= 1 -> mirrorBall
-           | otherwise -> id
-
-    collisionWithPaddle = do
-        ballPos <- view (ball . position)
-        lPlayer <- view leftPlayer
-        rPlayer <- view rightPlayer
-        let mirrorBall = over (ball . velocity . phi) (pi -)
-        if | ballPos `collidesWith` lPlayer -> mirrorBall
-           | ballPos `collidesWith` rPlayer -> mirrorBall
-           | otherwise -> id
+    collidesWith :: Vec2Cart -> Player -> Bool
+    collidesWith pos player = insideX && insideY
       where
-        collidesWith :: Vec2Cart -> Player -> Bool
-        collidesWith pos player = insideX && insideY
-          where
-            insideX = let playerXL = view (paddle . pPos . x) player
-                          playerXR = playerXL + view (paddle . pWidth) player
-                      in view (x . to (\xx -> xx >= playerXL && xx <= playerXR)) pos
-            insideY = let playerYT = view (paddle . pPos . y) player
-                          playerYB = playerYT + view (paddle . pHeight) player
-                      in view (y . to (\yy -> yy >= playerYT && yy <= playerYB)) pos
+        insideX = let playerXL = view (paddle . pPos . x) player
+                      playerXR = playerXL + view (paddle . pWidth) player
+                  in view (x . to (\xx -> xx >= playerXL && xx <= playerXR)) pos
+        insideY = let playerYT = view (paddle . pPos . y) player
+                      playerYB = playerYT + view (paddle . pHeight) player
+                  in view (y . to (\yy -> yy >= playerYT && yy <= playerYB)) pos
 
-    inertia = do
-        Vec2Cart xPos yPos <- view (ball . position)
-        Vec2Rad magnitude angle <- view (ball . velocity)
-        let newPos = Vec2Cart (xPos + magnitude * cos angle)
-                              (yPos + magnitude * sin angle)
-        set (ball . position) newPos
+inertia :: GameState -> GameState
+inertia = do
+    Vec2Cart xPos yPos <- view (ball . position)
+    Vec2Rad magnitude angle <- view (ball . velocity)
+    let newPos = Vec2Cart (xPos + magnitude * cos angle)
+                          (yPos + magnitude * sin angle)
+    set (ball . position) newPos
 
 main :: IO ()
 main = withVty standardIOConfig (\vty -> do
