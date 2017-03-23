@@ -104,14 +104,16 @@ makeNetworkDescription
     ePaddleMove <- mkEPaddleMoves addPlayerEvent
     eGameTime <- mkEGameTime addPhysicsEvent
     ePhysicsChange <- mkEPhysics eGameTime randomNumbers
-    (bGame, fireGameEvent) <- mkBGame [ePaddleMove, ePhysicsChange]
+    (addScoreEvent, fireScoreEvent) <- liftIO newAddHandler
+    bGame <- mkBGame addScoreEvent [ePaddleMove, ePhysicsChange]
+    bScore <- mkBScore addScoreEvent
 
     do eRender <- fromAddHandler addRenderEvent
-       reactimate (fmap (update vty . render (Score 0 0)) (bGame <@ eRender))
+       reactimate (fmap (update vty) (liftA2 render bScore bGame) <@ eRender)
     do eOpponent <- mkEOpponent addOpponentEvent bGame
        reactimate (fmap firePlayerEvent eOpponent)
     do let eScore = mapMaybe scoreWhenOutOfBounds (bGame <@ eGameTime)
-       reactimate (fmap fireGameEvent eScore)
+       reactimate (fmap fireScoreEvent eScore)
 
   where
 
@@ -135,9 +137,8 @@ makeNetworkDescription
             eCollisionWithPaddle = fmap collisionWithPaddle (bRandom <@ eGameTime)
         pure (unions [eInertia, eCollisionWithField, eCollisionWithPaddle])
 
-    mkBGame gameStateEvents = do
-        (addGameEvent, fireGameEvent) <- liftIO newAddHandler
-        ev <- fromAddHandler addGameEvent
+    mkBGame addScoreEvent gameStateEvents = do
+        ev <- fromAddHandler addScoreEvent
         let newMovementB :: Moment (Behavior GameState)
             newMovementB = accumB (initialGameState (100, 30) 10)
                                   (unions gameStateEvents)
@@ -148,8 +149,14 @@ makeNetworkDescription
                 RightPlayerScores -> newMovementB ))
 
         bMovementsInitial <- liftMoment newMovementB
-        bGame <- switchB bMovementsInitial eChangeMovements
-        pure (bGame, fireGameEvent)
+        switchB bMovementsInitial eChangeMovements
+
+    mkBScore addScoreEvent = do
+        eScore <- fromAddHandler addScoreEvent
+        let increaseScore = \case
+                LeftPlayerScores  -> over leftPlayer  (+1)
+                RightPlayerScores -> over rightPlayer (+1)
+        accumB (Score 0 0) (fmap increaseScore eScore)
 
     mkEOpponent addEvent bGame = do
         eOpponentTick <- fromAddHandler addEvent
