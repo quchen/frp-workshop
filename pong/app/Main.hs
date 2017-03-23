@@ -66,35 +66,37 @@ makeNetworkDescription
     :: Vty                    -- ^ Vty to render to
     -> AddHandler PlayerEvent -- ^ User input
     -> (PlayerEvent -> IO ()) -- ^ Fire player events
-    -> AddHandler ()          -- ^ Clock tick
+    -> AddHandler ()          -- ^ Render clock tick
+    -> AddHandler ()          -- ^ Physics clock tick
     -> MomentIO ()
-makeNetworkDescription vty addPlayerEvent firePlayerEvent addClockTickEvent = do
+makeNetworkDescription vty addPlayerEvent firePlayerEvent addRenderEvent addPhysicsEvent = do
+
     ePlayer <- fromAddHandler addPlayerEvent
-
-    eTime <- do
-        eTick <- fromAddHandler addClockTickEvent
-        accumE (0 :: Int) (fmap (\_ time -> time + 1) eTick)
-
     let ePaddleMove :: Frp.Event (GameState -> GameState)
         ePaddleMove = flip fmap ePlayer (\case
             MoveLeftPaddle delta -> movePaddle leftPlayer delta
             MoveRightPaddle delta -> movePaddle rightPlayer delta )
 
+    eGameTime <- do
+        eTick <- fromAddHandler addPhysicsEvent
+        accumE (0 :: Int) (fmap (\_ time -> time + 1) eTick)
     let eInertia, eCollisionWithField, eCollisionWithPaddle :: Frp.Event (GameState -> GameState)
-        eInertia = fmap (const inertia) eTime
-        eCollisionWithField = fmap (const collisionWithField) eTime
-        eCollisionWithPaddle = fmap (const collisionWithPaddle) eTime
+        eInertia = fmap (const inertia) eGameTime
+        eCollisionWithField = fmap (const collisionWithField) eGameTime
+        eCollisionWithPaddle = fmap (const collisionWithPaddle) eGameTime
 
-    eRender <- accumE (initialGameState (100, 30) 10) (unions
+    bGame <- accumB (initialGameState (100, 30) 10) (unions
         [ ePaddleMove
         , eInertia
         , eCollisionWithField
         , eCollisionWithPaddle ])
 
-    let eOpponent = mapMaybe opponent eRender
+    eRender <- fromAddHandler addRenderEvent
 
-    reactimate (fmap (update vty . render) eRender)
-    reactimate (fmap firePlayerEvent eOpponent)
+    -- let eOpponent = mapMaybe opponent eGame
+
+    reactimate (fmap (update vty . render) (bGame <@ eRender))
+    -- reactimate (fmap firePlayerEvent eOpponent)
 
 mapMaybe :: (a -> Maybe b) -> Frp.Event a -> Frp.Event b
 mapMaybe f es = filterJust (fmap f es)
@@ -125,6 +127,7 @@ collisionWithPaddle = do
     lPlayer <- view leftPlayer
     rPlayer <- view rightPlayer
     let mirrorBall = over (ball . velocity . phi) (pi -)
+                   . over (ball . velocity . r)   (1.1 *)
     if | ballPos `collidesWith` lPlayer -> mirrorBall
        | ballPos `collidesWith` rPlayer -> mirrorBall
        | otherwise -> id
@@ -158,22 +161,23 @@ opponent = do
 main :: IO ()
 main = withVty standardIOConfig (\vty -> do
 
-    (firePlayerEvent, fireClockEvent) <- do
+    (firePlayerEvent, fireClockEvent, firePhysicsEvent) <- do
         (addPlayerEvent, firePlayerEvent) <- newAddHandler
+        (addPhysicsEvent, firePhysicsEvent) <- newAddHandler
         (addClockTickEvent, fireClockEvent) <- newAddHandler
-        network <- compile (makeNetworkDescription vty addPlayerEvent firePlayerEvent addClockTickEvent)
+        network <- compile (makeNetworkDescription vty addPlayerEvent firePlayerEvent addClockTickEvent addPhysicsEvent)
         actuate network
-        pure (firePlayerEvent, fireClockEvent)
+        pure (firePlayerEvent, fireClockEvent, firePhysicsEvent)
 
     withClock 60 (fireClockEvent ()) (
-        fix (\loop -> nextEvent vty >>= \case
-            EvKey KEsc _        -> pure ()
-            EvKey (KChar 'q') _ -> pure ()
-            EvKey KUp _         -> firePlayerEvent (MoveLeftPaddle (-1)) >> loop
-            EvKey KDown _       -> firePlayerEvent (MoveLeftPaddle   1 ) >> loop
-            _otherwise          -> loop
-            ))
-    )
+        withClock 600 (firePhysicsEvent ()) (
+            fix (\loop -> nextEvent vty >>= \case
+                EvKey KEsc _        -> pure ()
+                EvKey (KChar 'q') _ -> pure ()
+                EvKey KUp _         -> firePlayerEvent (MoveLeftPaddle (-1)) >> loop
+                EvKey KDown _       -> firePlayerEvent (MoveLeftPaddle   1 ) >> loop
+                _otherwise          -> loop
+                ))))
 
 withVty :: IO Config -> (Vty -> IO a) -> IO a
 withVty mkConfig = bracket (mkConfig >>= mkVty) shutdown
@@ -206,7 +210,7 @@ initialGameState (fWidth, fHeight) paddleHeight = GameState
             , _pPos = Vec2Cart fWidthD (fHeightD / 2 - paddleHeightD / 2) } }
     , _ball = Ball
         { _position = Vec2Cart 5 (fHeightD / 2)
-        , _velocity = Vec2Rad 1 0.05 }
+        , _velocity = Vec2Rad 0.1 0.05 }
     , _fieldWidth = fWidth
     , _fieldHeight = fHeight
     }
