@@ -82,7 +82,7 @@ makeNetworkDescription vty addPlayerEvent addClockTickEvent = do
             MoveLeftPaddle delta -> movePaddle leftPlayer delta
             MoveRightPaddle delta -> movePaddle rightPlayer delta )
 
-    let eInertia, eCollisionWithField, eCollisionWithPaddle:: Frp.Event (GameState -> GameState)
+    let eInertia, eCollisionWithField, eCollisionWithPaddle :: Frp.Event (GameState -> GameState)
         eInertia = fmap (const inertia) eTime
         eCollisionWithField = fmap (const collisionWithField) eTime
         eCollisionWithPaddle = fmap (const collisionWithPaddle) eTime
@@ -91,7 +91,7 @@ makeNetworkDescription vty addPlayerEvent addClockTickEvent = do
         [ ePaddleMove
         , eInertia
         , eCollisionWithField
-        , eCollisionWithPaddle ] )
+        , eCollisionWithPaddle ])
 
     reactimate (fmap (update vty . render) eRender)
 
@@ -115,8 +115,8 @@ collisionWithField = do
     fieldLowerBound <- view fieldHeight
     let mirrorBall = over (ball . velocity . phi) negate
     if | ballPosY >= (fromIntegral fieldLowerBound + 1) -> mirrorBall
-        | ballPosY <= 1 -> mirrorBall
-        | otherwise -> id
+       | ballPosY <= 1 -> mirrorBall
+       | otherwise -> id
 
 collisionWithPaddle :: GameState -> GameState
 collisionWithPaddle = do
@@ -125,8 +125,8 @@ collisionWithPaddle = do
     rPlayer <- view rightPlayer
     let mirrorBall = over (ball . velocity . phi) (pi -)
     if | ballPos `collidesWith` lPlayer -> mirrorBall
-        | ballPos `collidesWith` rPlayer -> mirrorBall
-        | otherwise -> id
+       | ballPos `collidesWith` rPlayer -> mirrorBall
+       | otherwise -> id
   where
     collidesWith :: Vec2Cart -> Player -> Bool
     collidesWith pos player = insideX && insideY
@@ -162,7 +162,7 @@ main = withVty standardIOConfig (\vty -> do
             EvKey (KChar 'q') _ -> pure ()
             EvKey KUp _         -> firePlayerEvent (MoveLeftPaddle (-1)) >> loop
             EvKey KDown _       -> firePlayerEvent (MoveLeftPaddle   1 ) >> loop
-            _otherwise          ->  loop
+            _otherwise          -> loop
             ))
     )
 
@@ -187,20 +187,23 @@ initialGameState (fWidth, fHeight) paddleHeight = GameState
         { _score = 0
         , _paddle = Paddle
             { _pWidth = 1
-            , _pHeight = fromIntegral paddleHeight
-            , _pPos = Vec2Cart 1 (fromIntegral fHeight / 2 - fromIntegral paddleHeight / 2) } }
+            , _pHeight = paddleHeightD
+            , _pPos = Vec2Cart 1 (fHeightD / 2 - paddleHeightD / 2) } }
     , _rightPlayer = Player
         { _score = 0
         , _paddle = Paddle
             { _pWidth = 1
-            , _pHeight = fromIntegral paddleHeight * 2
-            , _pPos = Vec2Cart (fromIntegral fWidth) (fromIntegral fHeight / 2 - fromIntegral paddleHeight / 2) } }
+            , _pHeight = paddleHeightD * 2
+            , _pPos = Vec2Cart fWidthD (fHeightD / 2 - paddleHeightD / 2) } }
     , _ball = Ball
-        { _position = Vec2Cart 5 (fromIntegral fHeight / 2)
+        { _position = Vec2Cart 5 (fHeightD / 2)
         , _velocity = Vec2Rad 1 0.05 }
     , _fieldWidth = fWidth
     , _fieldHeight = fHeight
     }
+  where
+    [fWidthD, fHeightD, paddleHeightD]
+      = map fromIntegral [fWidth, fHeight, paddleHeight] :: [Double]
 
 render :: GameState -> Picture
 render gameState = picForLayers
