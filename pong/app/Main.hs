@@ -56,6 +56,10 @@ data PlayerEvent
     = MoveLeftPaddle  Int
     | MoveRightPaddle Int
 
+data GameEvent
+    = LeftPlayerScores
+    | RightPlayerScores
+
 makeLenses ''Player
 makeLenses ''Ball
 makeLenses ''Paddle
@@ -92,17 +96,24 @@ makeNetworkDescription vty randomNumbers addPlayerEvent firePlayerEvent addRende
         eCollisionWithField = fmap (const collisionWithField) eGameTime
         eCollisionWithPaddle = fmap collisionWithPaddle (bRandom <@ eGameTime)
 
-    bGame <- accumB (initialGameState (100, 30) 10) (unions
+    bMovements <- accumB (initialGameState (100, 30) 10) (unions
         [ ePaddleMove
         , eInertia
         , eCollisionWithField
         , eCollisionWithPaddle ])
 
-    eRender <- fromAddHandler addRenderEvent
+    (addGameEvent, fireGameEvent) <- liftIO newAddHandler
+    bGame <- do
+        ev <- fromAddHandler addGameEvent
+        switchB bMovements (flip fmap ev (\case
+            LeftPlayerScores  -> bMovements
+            RightPlayerScores -> bMovements ))
 
     eOpponent <- do
         eOpponentTick <- fromAddHandler addOpponentEvent
         pure (mapMaybe opponent (bGame <@ eOpponentTick))
+
+    eRender <- fromAddHandler addRenderEvent
 
     reactimate (fmap (update vty . render) (bGame <@ eRender))
     reactimate (fmap firePlayerEvent eOpponent)
