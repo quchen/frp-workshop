@@ -3,6 +3,7 @@
 {-# LANGUAGE NumDecimals       #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes        #-}
+{-# LANGUAGE RecursiveDo       #-}
 {-# LANGUAGE TemplateHaskell   #-}
 
 module Main (main) where
@@ -76,7 +77,7 @@ makeNetworkDescription
     -> AddHandler ()          -- ^ Physics clock tick
     -> AddHandler ()          -- ^ Opponent clock tick
     -> MomentIO ()
-makeNetworkDescription vty randomNumbers addPlayerEvent firePlayerEvent addRenderEvent addPhysicsEvent addOpponentEvent = do
+makeNetworkDescription vty randomNumbers addPlayerEvent firePlayerEvent addRenderEvent addPhysicsEvent addOpponentEvent = mdo
 
     ePlayer <- fromAddHandler addPlayerEvent
     let ePaddleMove :: Frp.Event (GameState -> GameState)
@@ -90,7 +91,7 @@ makeNetworkDescription vty randomNumbers addPlayerEvent firePlayerEvent addRende
     bRandom <-
         let drawRandom _time (_current, nextRandom : doubles) = (nextRandom, doubles)
             drawRandom _ (_, []) = error "Finite supply of randoms exhausted"
-        in (fmap . fmap) fst (accumB (0, randomNumbers) (fmap drawRandom eGameTime))
+        in (fmap . fmap) fst (accumB (0, randomNumbers) (fmap drawRandom eCollisionWithPaddle))
     let eInertia, eCollisionWithField, eCollisionWithPaddle :: Frp.Event (GameState -> GameState)
         eInertia = fmap (const inertia) eGameTime
         eCollisionWithField = fmap (const collisionWithField) eGameTime
