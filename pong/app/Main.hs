@@ -86,20 +86,29 @@ makeNetworkDescription
     -> AddHandler ()           -- ^ Physics clock tick
     -> AddHandler ()           -- ^ Opponent clock tick
     -> MomentIO ()
-makeNetworkDescription vty randomNumbers addPlayerEvent firePlayerEvent addRenderEvent addPhysicsEvent addOpponentEvent = do
+makeNetworkDescription
+    vty
+    randomNumbers
+    addPlayerEvent
+    firePlayerEvent
+    addRenderEvent
+    addPhysicsEvent
+    addOpponentEvent
+
+  = do
 
     ePaddleMove <- mkEPaddleMoves addPlayerEvent
     eGameTime <- mkEGameTime addPhysicsEvent
     ePhysicsChange <- mkEPhysics eGameTime randomNumbers
     (bGame, fireGameEvent) <- mkBGame [ePaddleMove, ePhysicsChange]
     eOpponent <- mkEOpponent addOpponentEvent bGame
-    eRender <- fromAddHandler addRenderEvent
 
-    let eScore = mapMaybe scoreWhenOutOfBounds (bGame <@ eRender)
 
-    reactimate (fmap (update vty . render (Score 0 0)) (bGame <@ eRender))
+    do eRender <- fromAddHandler addRenderEvent
+       reactimate (fmap (update vty . render (Score 0 0)) (bGame <@ eRender))
     reactimate (fmap firePlayerEvent eOpponent)
-    reactimate (fmap fireGameEvent eScore)
+    do let eScore = mapMaybe scoreWhenOutOfBounds (bGame <@ eGameTime)
+       reactimate (fmap fireGameEvent eScore)
 
   where
 
