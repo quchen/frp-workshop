@@ -23,6 +23,16 @@ import System.Random
 
 
 
+renderSpeed, physicsSpeed, enemyMoveSpeed :: PerSecond
+renderSpeed = PerSecond 60
+physicsSpeed = PerSecond 600
+enemyMoveSpeed = PerSecond 10
+
+
+
+
+newtype PerSecond = PerSecond Int
+
 data Player = Player
     { _score  :: Word
     , _paddle :: Paddle
@@ -69,13 +79,13 @@ makeLenses ''Vec2Rad
 makeLenses ''GameState
 
 makeNetworkDescription
-    :: Vty                    -- ^ Vty to render to
-    -> [Double]               -- ^ Infinite supply of random values in range 0..1
-    -> AddHandler PlayerEvent -- ^ User input
-    -> (PlayerEvent -> IO ()) -- ^ Fire player events
-    -> AddHandler ()          -- ^ Render clock tick
-    -> AddHandler ()          -- ^ Physics clock tick
-    -> AddHandler ()          -- ^ Opponent clock tick
+    :: Vty                     -- ^ Vty to render to
+    -> [Double]                -- ^ Infinite supply of random values in range 0..1
+    -> AddHandler PlayerEvent  -- ^ User input
+    -> Frp.Handler PlayerEvent -- ^ Fire player events
+    -> AddHandler ()           -- ^ Render clock tick
+    -> AddHandler ()           -- ^ Physics clock tick
+    -> AddHandler ()           -- ^ Opponent clock tick
     -> MomentIO ()
 makeNetworkDescription vty randomNumbers addPlayerEvent firePlayerEvent addRenderEvent addPhysicsEvent addOpponentEvent = mdo
 
@@ -89,9 +99,9 @@ makeNetworkDescription vty randomNumbers addPlayerEvent firePlayerEvent addRende
         eTick <- fromAddHandler addPhysicsEvent
         accumE (0 :: Int) (fmap (\_ time -> time + 1) eTick)
     bRandom <-
-        let drawRandom _time (_current, nextRandom : doubles) = (nextRandom, doubles)
-            drawRandom _ (_, []) = error "Finite supply of randoms exhausted"
-        in (fmap . fmap) fst (accumB (0, randomNumbers) (fmap drawRandom eCollisionWithPaddle))
+        let drawRandom (_current, nextRandom : doubles) = (nextRandom, doubles)
+            drawRandom (_, []) = error "Finite supply of randoms exhausted"
+        in (fmap . fmap) fst (accumB (0, randomNumbers) (drawRandom <$ eCollisionWithPaddle))
     let eInertia, eCollisionWithField, eCollisionWithPaddle :: Frp.Event (GameState -> GameState)
         eInertia = fmap (const inertia) eGameTime
         eCollisionWithField = fmap (const collisionWithField) eGameTime
@@ -204,10 +214,10 @@ main :: IO ()
 main = withVty standardIOConfig (\vty -> do
 
     randomNumbers <- fmap (randomRs (0,1)) getStdGen
-    (firePlayerEvent, fireClockEvent, firePhysicsEvent, fireOpponentEvent) <- do
-        (addPlayerEvent, firePlayerEvent) <- newAddHandler
-        (addPhysicsEvent, firePhysicsEvent) <- newAddHandler
-        (addClockTickEvent, fireClockEvent) <- newAddHandler
+    (firePlayerEvent, fireRenderEvent, firePhysicsEvent, fireOpponentEvent) <- do
+        (addPlayerEvent,   firePlayerEvent  ) <- newAddHandler
+        (addPhysicsEvent,  firePhysicsEvent ) <- newAddHandler
+        (addRenderEvent,   fireRenderEvent  ) <- newAddHandler
         (addOpponentEvent, fireOpponentEvent) <- newAddHandler
         network <- compile
             (makeNetworkDescription
@@ -215,15 +225,15 @@ main = withVty standardIOConfig (\vty -> do
                 randomNumbers
                 addPlayerEvent
                 firePlayerEvent
-                addClockTickEvent
+                addRenderEvent
                 addPhysicsEvent
                 addOpponentEvent )
         actuate network
-        pure (firePlayerEvent, fireClockEvent, firePhysicsEvent, fireOpponentEvent)
+        pure (firePlayerEvent, fireRenderEvent, firePhysicsEvent, fireOpponentEvent)
 
-    withClock 60 fireClockEvent (
-        withClock 600 firePhysicsEvent (
-            withClock 10 fireOpponentEvent (
+    withClock renderSpeed fireRenderEvent (
+        withClock physicsSpeed firePhysicsEvent (
+            withClock enemyMoveSpeed fireOpponentEvent (
                 fix (\loop -> nextEvent vty >>= \case
                     EvKey KEsc _        -> pure ()
                     EvKey (KChar 'q') _ -> pure ()
@@ -238,14 +248,14 @@ withVty :: IO Config -> (Vty -> IO a) -> IO a
 withVty mkConfig = bracket (mkConfig >>= mkVty) shutdown
 
 withClock
-    :: Int          -- ^ Ticks per second
+    :: PerSecond    -- ^ Tick periodicity
     -> (() -> IO a) -- ^ Action to run each tick
     -> IO b         -- ^ Action to perform with the clock ticking
     -> IO b
-withClock ticksPerSecond tickAction body = bracket acquire release (const body)
+withClock (PerSecond ps) tickAction body = bracket acquire release (const body)
   where
     acquire = async (forever (do
-        threadDelay (1e6 `quot` ticksPerSecond)
+        threadDelay (1e6 `quot` ps)
         tickAction () ))
     release = cancel
 
