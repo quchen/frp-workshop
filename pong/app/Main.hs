@@ -30,7 +30,6 @@ enemyMoveSpeed = PerSecond 10
 
 
 
-
 newtype PerSecond = PerSecond Int
 
 data Player = Player
@@ -87,49 +86,13 @@ makeNetworkDescription
     -> AddHandler ()           -- ^ Physics clock tick
     -> AddHandler ()           -- ^ Opponent clock tick
     -> MomentIO ()
-makeNetworkDescription vty randomNumbers addPlayerEvent firePlayerEvent addRenderEvent addPhysicsEvent addOpponentEvent = mdo
+makeNetworkDescription vty randomNumbers addPlayerEvent firePlayerEvent addRenderEvent addPhysicsEvent addOpponentEvent = do
 
-    ePlayer <- fromAddHandler addPlayerEvent
-    let ePaddleMove :: Frp.Event (GameState -> GameState)
-        ePaddleMove = flip fmap ePlayer (\case
-            MoveLeftPaddle delta -> movePaddle leftPlayer delta
-            MoveRightPaddle delta -> movePaddle rightPlayer delta )
-
-    eGameTime <- do
-        eTick <- fromAddHandler addPhysicsEvent
-        accumE (0 :: Int) (fmap (\_ time -> time + 1) eTick)
-    bRandom <-
-        let drawRandom (_current, nextRandom : doubles) = (nextRandom, doubles)
-            drawRandom (_, []) = error "Finite supply of randoms exhausted"
-        in (fmap . fmap) fst (accumB (0, randomNumbers) (drawRandom <$ eCollisionWithPaddle))
-    let eInertia, eCollisionWithField, eCollisionWithPaddle :: Frp.Event (GameState -> GameState)
-        eInertia = fmap (const inertia) eGameTime
-        eCollisionWithField = fmap (const collisionWithField) eGameTime
-        eCollisionWithPaddle = fmap collisionWithPaddle (bRandom <@ eGameTime)
-
-
-    (addGameEvent, fireGameEvent) <- liftIO newAddHandler
-    bGame <- do
-        ev <- fromAddHandler addGameEvent
-        let newMovementB :: Moment (Behavior GameState)
-            newMovementB = accumB (initialGameState (100, 30) 10) (unions
-                [ ePaddleMove
-                , eInertia
-                , eCollisionWithField
-                , eCollisionWithPaddle ])
-
-        let eChangeMovements :: Frp.Event (Behavior GameState)
-            eChangeMovements = observeE (flip fmap ev (\case
-                LeftPlayerScores  -> newMovementB
-                RightPlayerScores -> newMovementB ))
-
-        bMovementsInitial <- liftMoment newMovementB
-        switchB bMovementsInitial eChangeMovements
-
-    eOpponent <- do
-        eOpponentTick <- fromAddHandler addOpponentEvent
-        pure (mapMaybe opponent (bGame <@ eOpponentTick))
-
+    ePaddleMove <- mkEPaddleMoves addPlayerEvent
+    eGameTime <- mkEGameTime addPhysicsEvent
+    ePhysicsChange <- mkEPhysics eGameTime randomNumbers
+    (bGame, fireGameEvent) <- mkBGame [ePaddleMove, ePhysicsChange]
+    eOpponent <- mkEOpponent addOpponentEvent bGame
     eRender <- fromAddHandler addRenderEvent
 
     let eScore = mapMaybe scoreWhenOutOfBounds (bGame <@ eRender)
@@ -137,6 +100,48 @@ makeNetworkDescription vty randomNumbers addPlayerEvent firePlayerEvent addRende
     reactimate (fmap (update vty . render) (bGame <@ eRender))
     reactimate (fmap firePlayerEvent eOpponent)
     reactimate (fmap fireGameEvent eScore)
+
+  where
+
+    mkEPaddleMoves addEvent = do
+        ePlayer <- fromAddHandler addEvent
+        let playerEventToAction = \case
+                MoveLeftPaddle delta  -> movePaddle leftPlayer delta
+                MoveRightPaddle delta -> movePaddle rightPlayer delta
+        pure (fmap playerEventToAction ePlayer)
+
+    mkEGameTime addEvent = do
+        eTick <- fromAddHandler addEvent
+        accumE (0 :: Int) (fmap (\_ time -> time + 1) eTick)
+
+    mkEPhysics eGameTime infiniteNumberSupply = mdo
+        let drawRandom (_current, nextRandom : doubles) = (nextRandom, doubles)
+            drawRandom (_, []) = error "Finite supply of randoms exhausted"
+        bRandom <- (fmap . fmap) fst (accumB (0, infiniteNumberSupply) (drawRandom <$ eCollisionWithPaddle))
+        let eInertia = fmap (const inertia) eGameTime
+            eCollisionWithField = fmap (const collisionWithField) eGameTime
+            eCollisionWithPaddle = fmap collisionWithPaddle (bRandom <@ eGameTime)
+        pure (unions [eInertia, eCollisionWithField, eCollisionWithPaddle])
+
+    mkBGame gameStateEvents = do
+        (addGameEvent, fireGameEvent) <- liftIO newAddHandler
+        ev <- fromAddHandler addGameEvent
+        let newMovementB :: Moment (Behavior GameState)
+            newMovementB = accumB (initialGameState (100, 30) 10)
+                                  (unions gameStateEvents)
+
+        let eChangeMovements :: Frp.Event (Behavior GameState)
+            eChangeMovements = observeE (flip fmap ev (\case
+                LeftPlayerScores  -> newMovementB
+                RightPlayerScores -> newMovementB ))
+
+        bMovementsInitial <- liftMoment newMovementB
+        bGame <- switchB bMovementsInitial eChangeMovements
+        pure (bGame, fireGameEvent)
+
+    mkEOpponent addEvent bGame = do
+        eOpponentTick <- fromAddHandler addEvent
+        pure (mapMaybe opponent (bGame <@ eOpponentTick))
 
 mapMaybe :: (a -> Maybe b) -> Frp.Event a -> Frp.Event b
 mapMaybe f es = filterJust (fmap f es)
