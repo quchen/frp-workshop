@@ -68,9 +68,10 @@ renderToTerminal = error "TODO: renderToTerminal"
 makeNetworkDescription
     :: Vty                    -- ^ Vty to render to
     -> AddHandler PlayerEvent -- ^ User input
+    -> (PlayerEvent -> IO ()) -- ^ Fire player events
     -> AddHandler ()          -- ^ Clock tick
     -> MomentIO ()
-makeNetworkDescription vty addPlayerEvent addClockTickEvent = do
+makeNetworkDescription vty addPlayerEvent firePlayerEvent addClockTickEvent = do
     ePlayer <- fromAddHandler addPlayerEvent
 
     eTime <- do
@@ -93,7 +94,10 @@ makeNetworkDescription vty addPlayerEvent addClockTickEvent = do
         , eCollisionWithField
         , eCollisionWithPaddle ])
 
+    let eOpponent = mapMaybe opponent eRender
+
     reactimate (fmap (update vty . render) eRender)
+    reactimate (fmap firePlayerEvent eOpponent)
 
 mapMaybe :: (a -> Maybe b) -> Frp.Event a -> Frp.Event b
 mapMaybe f es = filterJust (fmap f es)
@@ -146,13 +150,21 @@ inertia = do
                           (yPos + magnitude * sin angle)
     set (ball . position) newPos
 
+opponent :: GameState -> Maybe PlayerEvent
+opponent = do
+    yBall <- view (ball . position . y)
+    yPlayer <- view (leftPlayer . paddle . pPos . y)
+    pure (if | yBall < (yPlayer - 1) -> Just (MoveRightPaddle (-1))
+             | yBall > (yPlayer + 1) -> Just (MoveRightPaddle 1)
+             | otherwise             -> Nothing )
+
 main :: IO ()
 main = withVty standardIOConfig (\vty -> do
 
     (firePlayerEvent, fireClockEvent) <- do
         (addPlayerEvent, firePlayerEvent) <- newAddHandler
         (addClockTickEvent, fireClockEvent) <- newAddHandler
-        network <- compile (makeNetworkDescription vty addPlayerEvent addClockTickEvent)
+        network <- compile (makeNetworkDescription vty addPlayerEvent firePlayerEvent addClockTickEvent)
         actuate network
         pure (firePlayerEvent, fireClockEvent)
 
