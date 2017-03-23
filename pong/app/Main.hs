@@ -93,10 +93,10 @@ makeNetworkDescription vty addPlayerEvent firePlayerEvent addRenderEvent addPhys
 
     eRender <- fromAddHandler addRenderEvent
 
-    -- let eOpponent = mapMaybe opponent eGame
+    let eOpponent = mapMaybe opponent (bGame <@ eRender)
 
     reactimate (fmap (update vty . render) (bGame <@ eRender))
-    -- reactimate (fmap firePlayerEvent eOpponent)
+    reactimate (fmap firePlayerEvent eOpponent)
 
 mapMaybe :: (a -> Maybe b) -> Frp.Event a -> Frp.Event b
 mapMaybe f es = filterJust (fmap f es)
@@ -153,7 +153,9 @@ inertia = do
 opponent :: GameState -> Maybe PlayerEvent
 opponent = do
     yBall <- view (ball . position . y)
-    yPlayer <- view (leftPlayer . paddle . pPos . y)
+    paddleTop <- view (rightPlayer . paddle . pPos . y)
+    paddleHeight <- view (rightPlayer . paddle . pHeight)
+    let yPlayer = paddleTop + paddleHeight / 2
     pure (if | yBall < (yPlayer - 1) -> Just (MoveRightPaddle (-1))
              | yBall > (yPlayer + 1) -> Just (MoveRightPaddle 1)
              | otherwise             -> Nothing )
@@ -206,7 +208,7 @@ initialGameState (fWidth, fHeight) paddleHeight = GameState
         { _score = 0
         , _paddle = Paddle
             { _pWidth = 1
-            , _pHeight = paddleHeightD * 2
+            , _pHeight = paddleHeightD / 2
             , _pPos = Vec2Cart fWidthD (fHeightD / 2 - paddleHeightD / 2) } }
     , _ball = Ball
         { _position = Vec2Cart 5 (fHeightD / 2)
