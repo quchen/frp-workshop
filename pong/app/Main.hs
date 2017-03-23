@@ -265,18 +265,19 @@ main = withVty standardIOConfig (\vty -> do
         actuate network
         pure (firePlayerEvent, fireRenderEvent, firePhysicsEvent, fireOpponentEvent)
 
-    withClock renderSpeed (fireRenderEvent RenderTick) (
-        withClock physicsSpeed (firePhysicsEvent PhysicsTick) (
-            withClock enemyMoveSpeed (fireOpponentEvent OpponentTick) (
-                fix (\loop -> nextEvent vty >>= \case
-                    EvKey KEsc _        -> pure ()
-                    EvKey (KChar 'q') _ -> pure ()
-                    EvKey KUp _         -> firePlayerEvent (MoveLeftPaddle (-1)) >> loop
-                    EvKey (KChar 'k') _ -> firePlayerEvent (MoveLeftPaddle (-1)) >> loop
-                    EvKey KDown _       -> firePlayerEvent (MoveLeftPaddle   1 ) >> loop
-                    EvKey (KChar 'j') _ -> firePlayerEvent (MoveLeftPaddle   1 ) >> loop
-                    _otherwise          -> loop
-                    )))))
+    let renderClocked = withClock renderSpeed (fireRenderEvent RenderTick)
+        physicsClocked = withClock physicsSpeed (firePhysicsEvent PhysicsTick)
+        opponentClocked = withClock enemyMoveSpeed (fireOpponentEvent OpponentTick)
+        clocked = renderClocked . physicsClocked . opponentClocked
+    clocked (fix (\loop -> nextEvent vty >>= \case
+        EvKey KEsc _        -> pure ()
+        EvKey (KChar 'q') _ -> pure ()
+        EvKey KUp _         -> firePlayerEvent (MoveLeftPaddle (-1)) >> loop
+        EvKey (KChar 'k') _ -> firePlayerEvent (MoveLeftPaddle (-1)) >> loop
+        EvKey KDown _       -> firePlayerEvent (MoveLeftPaddle   1 ) >> loop
+        EvKey (KChar 'j') _ -> firePlayerEvent (MoveLeftPaddle   1 ) >> loop
+        _otherwise          -> loop
+        )))
 
 withVty :: IO Config -> (Vty -> IO a) -> IO a
 withVty mkConfig = bracket (mkConfig >>= mkVty) shutdown
