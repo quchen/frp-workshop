@@ -262,6 +262,7 @@ initialGameState (fWidth, fHeight) paddleHeight = GameState
 render :: GameState -> Picture
 render gameState = picForLayers
     [ renderBall (view ball gameState)
+    , renderScore
     , renderLeftPlayer
     , renderRightPlayer
     , renderGameField
@@ -272,9 +273,9 @@ render gameState = picForLayers
 
     renderGameField = horizCat
         [ vertCat
-            [ char defAttr '┌'
+            [ char     defAttr '┌'
             , charFill defAttr '│' 1 (view fieldHeight gameState)
-            , char defAttr '└'
+            , char     defAttr '└'
             ]
         , vertCat
             [ charFill defAttr '─' (view fieldWidth gameState) 1
@@ -282,9 +283,9 @@ render gameState = picForLayers
             , charFill defAttr '─' (view fieldWidth gameState) 1
             ]
         , vertCat
-            [ char defAttr '┐'
+            [ char     defAttr '┐'
             , charFill defAttr '│' 1 (view fieldHeight gameState)
-            , char defAttr '┘'
+            , char     defAttr '┘'
             ]
         ]
 
@@ -301,3 +302,12 @@ render gameState = picForLayers
     renderBall b = translate (round (view (position . x) b))
                              (round (view (position . y) b))
                              (char defAttr '●')
+
+    renderScore :: Image
+    renderScore =
+        let halfFieldWidth = view (fieldWidth . to (`quot` 2)) gameState
+            scoreLeft  = view (leftPlayer . score) gameState
+            scoreRight = view (rightPlayer . score) gameState
+            offset = halfFieldWidth - length (show scoreLeft)
+            displayScore = show scoreLeft ++ ":" ++ show scoreRight
+        in  translate offset 1 (string defAttr displayScore)
