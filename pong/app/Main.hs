@@ -30,6 +30,7 @@ enemyMoveSpeed = PerSecond 10
 
 
 
+
 newtype PerSecond = PerSecond Int
 
 data Player = Player
@@ -66,7 +67,7 @@ data PlayerEvent
     = MoveLeftPaddle  Int
     | MoveRightPaddle Int
 
-data GameEvent
+data ScoreEvent
     = LeftPlayerScores
     | RightPlayerScores
 
@@ -224,7 +225,7 @@ opponent = do
              | yBall > (yPlayer + 1) -> Just (MoveRightPaddle 1)
              | otherwise             -> Nothing )
 
-scoreWhenOutOfBounds :: GameState -> Maybe GameEvent
+scoreWhenOutOfBounds :: GameState -> Maybe ScoreEvent
 scoreWhenOutOfBounds = do
     xBall <- view (ball . position . x)
     fWidth <- view (fieldWidth . to fromIntegral)
