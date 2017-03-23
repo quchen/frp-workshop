@@ -99,7 +99,15 @@ mapMaybe :: (a -> Maybe b) -> Frp.Event a -> Frp.Event b
 mapMaybe f es = filterJust (fmap f es)
 
 movePaddle :: Lens' GameState Player -> Int -> GameState -> GameState
-movePaddle player delta = over (player . paddle . pPos . y) (subtract (fromIntegral delta))
+movePaddle player delta = do
+    top <- view (player . paddle . pPos . y)
+    bot <- (+ top) . view (player . paddle . pHeight)
+    maxBot <- view (fieldHeight . to fromIntegral)
+    let delta' = fromIntegral delta
+    over (player . paddle . pPos . y) (\yPos ->
+        if | top + delta' <= 0 -> yPos
+           | bot + delta' >= maxBot + 2 -> yPos -- +2 works. Don’t ask me why. :-|
+           | otherwise -> yPos + delta' )
 
 collisionWithField :: GameState -> GameState
 collisionWithField = do
@@ -152,8 +160,8 @@ main = withVty standardIOConfig (\vty -> do
         fix (\loop -> nextEvent vty >>= \case
             EvKey KEsc _        -> pure ()
             EvKey (KChar 'q') _ -> pure ()
-            EvKey KUp _         -> firePlayerEvent (MoveLeftPaddle 1) >> loop
-            EvKey KDown _       -> firePlayerEvent (MoveLeftPaddle (-1)) >> loop
+            EvKey KUp _         -> firePlayerEvent (MoveLeftPaddle (-1)) >> loop
+            EvKey KDown _       -> firePlayerEvent (MoveLeftPaddle   1 ) >> loop
             _otherwise          ->  loop
             ))
     )
