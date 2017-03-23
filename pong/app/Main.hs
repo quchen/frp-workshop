@@ -68,8 +68,9 @@ makeNetworkDescription
     -> (PlayerEvent -> IO ()) -- ^ Fire player events
     -> AddHandler ()          -- ^ Render clock tick
     -> AddHandler ()          -- ^ Physics clock tick
+    -> AddHandler ()          -- ^ Opponent clock tick
     -> MomentIO ()
-makeNetworkDescription vty addPlayerEvent firePlayerEvent addRenderEvent addPhysicsEvent = do
+makeNetworkDescription vty addPlayerEvent firePlayerEvent addRenderEvent addPhysicsEvent addOpponentEvent = do
 
     ePlayer <- fromAddHandler addPlayerEvent
     let ePaddleMove :: Frp.Event (GameState -> GameState)
@@ -93,7 +94,9 @@ makeNetworkDescription vty addPlayerEvent firePlayerEvent addRenderEvent addPhys
 
     eRender <- fromAddHandler addRenderEvent
 
-    let eOpponent = mapMaybe opponent (bGame <@ eRender)
+    eOpponent <- do
+        eOpponentTick <- fromAddHandler addOpponentEvent
+        pure (mapMaybe opponent (bGame <@ eOpponentTick))
 
     reactimate (fmap (update vty . render) (bGame <@ eRender))
     reactimate (fmap firePlayerEvent eOpponent)
@@ -163,37 +166,46 @@ opponent = do
 main :: IO ()
 main = withVty standardIOConfig (\vty -> do
 
-    (firePlayerEvent, fireClockEvent, firePhysicsEvent) <- do
+    (firePlayerEvent, fireClockEvent, firePhysicsEvent, fireOpponentEvent) <- do
         (addPlayerEvent, firePlayerEvent) <- newAddHandler
         (addPhysicsEvent, firePhysicsEvent) <- newAddHandler
         (addClockTickEvent, fireClockEvent) <- newAddHandler
-        network <- compile (makeNetworkDescription vty addPlayerEvent firePlayerEvent addClockTickEvent addPhysicsEvent)
+        (addOpponentEvent, fireOpponentEvent) <- newAddHandler
+        network <- compile
+            (makeNetworkDescription
+                vty
+                addPlayerEvent
+                firePlayerEvent
+                addClockTickEvent
+                addPhysicsEvent
+                addOpponentEvent )
         actuate network
-        pure (firePlayerEvent, fireClockEvent, firePhysicsEvent)
+        pure (firePlayerEvent, fireClockEvent, firePhysicsEvent, fireOpponentEvent)
 
-    withClock 60 (fireClockEvent ()) (
-        withClock 600 (firePhysicsEvent ()) (
-            fix (\loop -> nextEvent vty >>= \case
-                EvKey KEsc _        -> pure ()
-                EvKey (KChar 'q') _ -> pure ()
-                EvKey KUp _         -> firePlayerEvent (MoveLeftPaddle (-1)) >> loop
-                EvKey KDown _       -> firePlayerEvent (MoveLeftPaddle   1 ) >> loop
-                _otherwise          -> loop
-                ))))
+    withClock 60 fireClockEvent (
+        withClock 600 firePhysicsEvent (
+            withClock 10 fireOpponentEvent (
+                fix (\loop -> nextEvent vty >>= \case
+                    EvKey KEsc _        -> pure ()
+                    EvKey (KChar 'q') _ -> pure ()
+                    EvKey KUp _         -> firePlayerEvent (MoveLeftPaddle (-1)) >> loop
+                    EvKey KDown _       -> firePlayerEvent (MoveLeftPaddle   1 ) >> loop
+                    _otherwise          -> loop
+                    )))))
 
 withVty :: IO Config -> (Vty -> IO a) -> IO a
 withVty mkConfig = bracket (mkConfig >>= mkVty) shutdown
 
 withClock
-    :: Int  -- ^ Ticks per second
-    -> IO a -- ^ Action to run each tick
-    -> IO b -- ^ Action to perform with the clock ticking
+    :: Int          -- ^ Ticks per second
+    -> (() -> IO a) -- ^ Action to run each tick
+    -> IO b         -- ^ Action to perform with the clock ticking
     -> IO b
 withClock ticksPerSecond tickAction body = bracket acquire release (const body)
   where
     acquire = async (forever (do
         threadDelay (1e6 `quot` ticksPerSecond)
-        tickAction ))
+        tickAction () ))
     release = cancel
 
 initialGameState :: (Int, Int) -> Int -> GameState
