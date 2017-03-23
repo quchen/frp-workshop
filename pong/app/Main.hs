@@ -5,7 +5,7 @@
 {-# LANGUAGE RankNTypes        #-}
 {-# LANGUAGE TemplateHaskell   #-}
 
-module Main where
+module Main (main) where
 
 
 
@@ -61,9 +61,6 @@ makeLenses ''Paddle
 makeLenses ''Vec2Cart
 makeLenses ''Vec2Rad
 makeLenses ''GameState
-
-renderToTerminal :: GameState -> IO ()
-renderToTerminal = error "TODO: renderToTerminal"
 
 makeNetworkDescription
     :: Vty                    -- ^ Vty to render to
