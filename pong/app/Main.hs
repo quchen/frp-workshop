@@ -2,6 +2,7 @@
 {-# LANGUAGE MultiWayIf        #-}
 {-# LANGUAGE NumDecimals       #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RankNTypes        #-}
 {-# LANGUAGE TemplateHaskell   #-}
 
 module Main where
@@ -51,7 +52,8 @@ data GameState = GameState
     }
 
 data PlayerEvent
-    = MovePaddle Int
+    = MoveLeftPaddle  Int
+    | MoveRightPaddle Int
 
 makeLenses ''Player
 makeLenses ''Ball
@@ -76,22 +78,28 @@ makeNetworkDescription vty addPlayerEvent addClockTickEvent = do
         accumE (0 :: Int) (fmap (\_ time -> time + 1) eTick)
 
     let ePaddleMove :: Frp.Event (GameState -> GameState)
-        ePaddleMove = fmap (\(MovePaddle delta) -> movePaddle delta) ePlayer
+        ePaddleMove = flip fmap ePlayer (\case
+            MoveLeftPaddle delta -> movePaddle leftPlayer delta
+            MoveRightPaddle delta -> movePaddle rightPlayer delta )
 
     let eInertia, eCollisionWithField, eCollisionWithPaddle:: Frp.Event (GameState -> GameState)
         eInertia = fmap (const inertia) eTime
         eCollisionWithField = fmap (const collisionWithField) eTime
         eCollisionWithPaddle = fmap (const collisionWithPaddle) eTime
 
-    eRender <- accumE (initialGameState (100, 30) 10) (unions [ePaddleMove, eInertia, eCollisionWithField, eCollisionWithPaddle])
+    eRender <- accumE (initialGameState (100, 30) 10) (unions
+        [ ePaddleMove
+        , eInertia
+        , eCollisionWithField
+        , eCollisionWithPaddle ] )
 
     reactimate (fmap (update vty . render) eRender)
 
 mapMaybe :: (a -> Maybe b) -> Frp.Event a -> Frp.Event b
 mapMaybe f es = filterJust (fmap f es)
 
-movePaddle :: Int -> GameState -> GameState
-movePaddle delta = over (leftPlayer . paddle . pPos . y) (+ fromIntegral delta)
+movePaddle :: Lens' GameState Player -> Int -> GameState -> GameState
+movePaddle player delta = over (player . paddle . pPos . y) (subtract (fromIntegral delta))
 
 collisionWithField :: GameState -> GameState
 collisionWithField = do
@@ -144,8 +152,8 @@ main = withVty standardIOConfig (\vty -> do
         fix (\loop -> nextEvent vty >>= \case
             EvKey KEsc _        -> pure ()
             EvKey (KChar 'q') _ -> pure ()
-            EvKey KUp _         -> firePlayerEvent (MovePaddle (-1)) >> loop
-            EvKey KDown _       -> firePlayerEvent (MovePaddle 1) >> loop
+            EvKey KUp _         -> firePlayerEvent (MoveLeftPaddle 1) >> loop
+            EvKey KDown _       -> firePlayerEvent (MoveLeftPaddle (-1)) >> loop
             _otherwise          ->  loop
             ))
     )
