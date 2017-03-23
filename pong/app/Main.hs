@@ -247,9 +247,9 @@ scoreWhenOutOfBounds :: GameState -> Maybe ScoreEvent
 scoreWhenOutOfBounds = do
     xBall <- view (ball . position . x)
     fWidth <- view (fieldWidth . to fromIntegral)
-    pure (if | xBall < 0      -> Just RightPlayerScores
-             | xBall > fWidth -> Just LeftPlayerScores
-             | otherwise      -> Nothing )
+    pure (if | xBall < 0          -> Just RightPlayerScores
+             | xBall > fWidth + 1 -> Just LeftPlayerScores
+             | otherwise          -> Nothing )
 
 main :: IO ()
 main = withVty standardIOConfig (\vty -> setupNetwork vty >>= runPong vty)
