@@ -107,18 +107,24 @@ makeNetworkDescription vty randomNumbers addPlayerEvent firePlayerEvent addRende
         eCollisionWithField = fmap (const collisionWithField) eGameTime
         eCollisionWithPaddle = fmap collisionWithPaddle (bRandom <@ eGameTime)
 
-    bMovements <- accumB (initialGameState (100, 30) 10) (unions
-        [ ePaddleMove
-        , eInertia
-        , eCollisionWithField
-        , eCollisionWithPaddle ])
 
     (addGameEvent, fireGameEvent) <- liftIO newAddHandler
     bGame <- do
         ev <- fromAddHandler addGameEvent
-        switchB bMovements (flip fmap ev (\case
-            LeftPlayerScores  -> bMovements
-            RightPlayerScores -> bMovements ))
+        let newMovementB :: Moment (Behavior GameState)
+            newMovementB = accumB (initialGameState (100, 30) 10) (unions
+                [ ePaddleMove
+                , eInertia
+                , eCollisionWithField
+                , eCollisionWithPaddle ])
+
+        let eChangeMovements :: Frp.Event (Behavior GameState)
+            eChangeMovements = observeE (flip fmap ev (\case
+                LeftPlayerScores  -> newMovementB
+                RightPlayerScores -> newMovementB ))
+
+        bMovementsInitial <- liftMoment newMovementB
+        switchB bMovementsInitial eChangeMovements
 
     eOpponent <- do
         eOpponentTick <- fromAddHandler addOpponentEvent
@@ -126,8 +132,11 @@ makeNetworkDescription vty randomNumbers addPlayerEvent firePlayerEvent addRende
 
     eRender <- fromAddHandler addRenderEvent
 
+    let eScore = mapMaybe scoreWhenOutOfBounds (bGame <@ eRender)
+
     reactimate (fmap (update vty . render) (bGame <@ eRender))
     reactimate (fmap firePlayerEvent eOpponent)
+    reactimate (fmap fireGameEvent eScore)
 
 mapMaybe :: (a -> Maybe b) -> Frp.Event a -> Frp.Event b
 mapMaybe f es = filterJust (fmap f es)
@@ -209,6 +218,14 @@ opponent = do
     pure (if | yBall < (yPlayer - 1) -> Just (MoveRightPaddle (-1))
              | yBall > (yPlayer + 1) -> Just (MoveRightPaddle 1)
              | otherwise             -> Nothing )
+
+scoreWhenOutOfBounds :: GameState -> Maybe GameEvent
+scoreWhenOutOfBounds = do
+    xBall <- view (ball . position . x)
+    fWidth <- view (fieldWidth . to fromIntegral)
+    pure (if | xBall < 0      -> Just RightPlayerScores
+             | xBall > fWidth -> Just LeftPlayerScores
+             | otherwise      -> Nothing )
 
 main :: IO ()
 main = withVty standardIOConfig (\vty -> do
