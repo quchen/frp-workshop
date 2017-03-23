@@ -50,6 +50,9 @@ data GameState = GameState
     , _fieldHeight :: Int
     }
 
+data PlayerEvent
+    = MovePaddle Int
+
 makeLenses ''Player
 makeLenses ''Ball
 makeLenses ''Paddle
@@ -61,23 +64,19 @@ renderToTerminal :: GameState -> IO ()
 renderToTerminal = error "TODO: renderToTerminal"
 
 makeNetworkDescription
-    :: Vty                  -- ^ Vty to render to
-    -> AddHandler Vty.Event -- ^ User input
-    -> AddHandler ()        -- ^ Clock tick
+    :: Vty                    -- ^ Vty to render to
+    -> AddHandler PlayerEvent -- ^ User input
+    -> AddHandler ()          -- ^ Clock tick
     -> MomentIO ()
-makeNetworkDescription vty addVtyEvent addClockTickEvent = do
-    eVty <- fromAddHandler addVtyEvent
-    let eKey = flip mapMaybe eVty (\case
-            EvKey key modifiers -> Just (key, modifiers)
-            _other -> Nothing
-            )
+makeNetworkDescription vty addPlayerEvent addClockTickEvent = do
+    ePlayer <- fromAddHandler addPlayerEvent
 
     eTime <- do
         eTick <- fromAddHandler addClockTickEvent
         accumE (0 :: Int) (fmap (\_ time -> time + 1) eTick)
 
     let ePaddleMove :: Frp.Event (GameState -> GameState)
-        ePaddleMove = fmap (\(key, _mod) -> movePaddle key) eKey
+        ePaddleMove = fmap (\(MovePaddle delta) -> movePaddle delta) ePlayer
 
     let eBallMove :: Frp.Event (GameState -> GameState)
         eBallMove = fmap (const moveBall) eTime
@@ -89,11 +88,8 @@ makeNetworkDescription vty addVtyEvent addClockTickEvent = do
 mapMaybe :: (a -> Maybe b) -> Frp.Event a -> Frp.Event b
 mapMaybe f es = filterJust (fmap f es)
 
-movePaddle :: Vty.Key -> GameState -> GameState
-movePaddle = \case
-    KUp    -> over (leftPlayer . paddle . pPos . y) (subtract 1)
-    KDown  -> over (leftPlayer . paddle . pPos . y) (+ 1)
-    _other -> id
+movePaddle :: Int -> GameState -> GameState
+movePaddle delta = over (leftPlayer . paddle . pPos . y) (+ fromIntegral delta)
 
 moveBall :: GameState -> GameState
 moveBall = collisionWithPaddle . collisionWithField . inertia
@@ -135,18 +131,20 @@ moveBall = collisionWithPaddle . collisionWithField . inertia
 main :: IO ()
 main = withVty standardIOConfig (\vty -> do
 
-    (fireVty, fireClock) <- do
-        (addVtyEvent, fireVty) <- newAddHandler
-        (addClockTickEvent, fireClock) <- newAddHandler
-        network <- compile (makeNetworkDescription vty addVtyEvent addClockTickEvent)
+    (firePlayerEvent, fireClockEvent) <- do
+        (addPlayerEvent, firePlayerEvent) <- newAddHandler
+        (addClockTickEvent, fireClockEvent) <- newAddHandler
+        network <- compile (makeNetworkDescription vty addPlayerEvent addClockTickEvent)
         actuate network
-        pure (fireVty, fireClock)
+        pure (firePlayerEvent, fireClockEvent)
 
-    withClock 60 (fireClock ()) (
+    withClock 60 (fireClockEvent ()) (
         fix (\loop -> nextEvent vty >>= \case
-            EvKey KEsc _ -> pure ()
+            EvKey KEsc _        -> pure ()
             EvKey (KChar 'q') _ -> pure ()
-            ev -> fireVty ev >> loop
+            EvKey KUp _         -> firePlayerEvent (MovePaddle (-1)) >> loop
+            EvKey KDown _       -> firePlayerEvent (MovePaddle 1) >> loop
+            _otherwise          ->  loop
             ))
     )
 
