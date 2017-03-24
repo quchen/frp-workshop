@@ -112,7 +112,7 @@ main = withVty (\vty -> do
     (addClockEvent, fireClockEvent) <- newAddHandler
     (addDirectionEvent, fireDirectionEvent) <- newAddHandler
 
-    eventNetwork <- compile (do
+    eventNetwork <- compile $ do
         eClock <- fromAddHandler addClockEvent
 
         bDirection <- fromChanges initialDirection addDirectionEvent
@@ -122,13 +122,14 @@ main = withVty (\vty -> do
         let bArena = pure initialArena
         let bEdible = pure initialEdible
 
-        do let eRender = (\a e s -> RenderState a s e)
-                     <$> bArena
-                     <*> bEdible
-                     <@> eSnake
-           reactimate (fmap (\renderState -> Vty.update vty (paintRenderState renderState))
-                            eRender)
-        )
+        let bEverythingElse :: Behavior (Snake -> RenderState)
+            bEverythingElse = fmap flip RenderState <$> bArena <*> bEdible
+
+        let eRender :: Reactive.Banana.Event RenderState
+            eRender = bEverythingElse <@> eSnake
+
+        reactimate (fmap (Vty.update vty . paintRenderState) eRender)
+
     actuate eventNetwork
 
     withClock 8 (fireClockEvent RenderTick) (fix (\loop -> Vty.nextEvent vty >>= \case
