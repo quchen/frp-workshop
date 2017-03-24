@@ -17,6 +17,7 @@ import           Data.Foldable
 import           Data.Function
 import           Data.Sequence              (Seq)
 import qualified Data.Sequence              as Seq
+import           Debug.Trace
 import qualified Graphics.Vty               as Vty
 import           Reactive.Banana
 import           Reactive.Banana.Frameworks
@@ -30,9 +31,11 @@ data Arena = Arena
 data Vec2 = Vec2
     { _vx :: Int
     , _vy :: Int }
+    deriving (Eq, Show)
 
 data Snake = Snake
     { _body :: Seq Vec2 }
+    deriving (Show)
 
 data Direction = U | D | L | R
 
@@ -99,6 +102,11 @@ sequenceHead = to (\s -> case Seq.viewl s of
     Seq.EmptyL -> error "Empty sequence!"
     x Seq.:< _ -> x)
 
+sequenceTail :: Getter (Seq a) (Seq a)
+sequenceTail = to (\s -> case Seq.viewl s of
+    Seq.EmptyL  -> error "Empty sequence!"
+    _ Seq.:< xs -> xs)
+
 sequenceInit :: Getter (Seq a) (Seq a)
 sequenceInit = to (\s -> case Seq.viewr s of
     Seq.EmptyR  -> error "Empty sequence!"
@@ -111,38 +119,45 @@ main :: IO ()
 main = withVty (\vty -> do
     (addClockEvent, fireClockEvent) <- newAddHandler
     (addDirectionEvent, fireDirectionEvent) <- newAddHandler
+    (addDeathEvent, fireDeathEvent) <- newAddHandler
 
     eventNetwork <- compile $ do
         eClock <- fromAddHandler addClockEvent
 
         bDirection <- fromChanges initialDirection addDirectionEvent
 
-        let eSnakeMotion = moveSnake <$> bDirection <@ eClock
-        eSnake <- accumE initialSnake eSnakeMotion
+        eDeath <- fromAddHandler addDeathEvent
 
-        let bArena = pure initialArena
-        let bEdible = pure initialEdible
-
-        let bEverythingElse :: Behavior (Snake -> RenderState)
-            bEverythingElse = fmap flip RenderState <$> bArena <*> bEdible
-
-        let collides :: Arena -> Snake -> Bool
-            collides ar sn =
+        let collidesWithArena :: Snake -> Bool
+            collidesWithArena sn =
                 let Vec2 headX headY = view (body . sequenceHead) sn
-                    arenaH = view arenaHeight ar
-                    arenaW = view arenaWidth  ar
+                    arenaH = view arenaHeight initialArena
+                    arenaW = view arenaWidth  initialArena
                 in  headX < 0 || headY < 0 || headX >= arenaW || headY >= arenaH
 
-        bWithinBounds <- do
-            a <- valueB bArena
-            stepper True (fmap (not . collides a) eSnake)
+            collidesWithSelf :: Snake -> Bool
+            collidesWithSelf s = view (body . sequenceHead) s `elem` view (body . sequenceTail) s
 
-        let eRender :: Reactive.Banana.Event RenderState
-            eRender = bEverythingElse <@> (whenE bWithinBounds eSnake)
+        let eSnakeMotion = moveSnake <$> bDirection <@ eClock
+            newBSnake = accumB initialSnake eSnakeMotion
+        bSnake <- newBSnake >>= \initialBSnake -> switchB initialBSnake _
 
-        reactimate (fmap (Vty.update vty . paintRenderState) eRender)
 
-        
+        let bIsAlive :: Behavior Bool
+            bIsAlive = fmap (\s -> not (collidesWithArena s || collidesWithSelf s)) bSnake
+
+        let bEdible = pure initialEdible
+
+        let bRender :: Behavior RenderState
+            bRender = RenderState initialArena <$> bSnake <*> bEdible
+
+
+        eRender <- fmap (whenE           bIsAlive ) (changes bRender)
+        eDeath  <- fmap (whenE (fmap not bIsAlive)) (changes bRender)
+
+        reactimate' (fmap (fmap (Vty.update vty . paintRenderState)) eRender)
+        reactimate' (fmap (fmap (const (fireDeathEvent ()))) eDeath)
+
     actuate eventNetwork
 
     withClock 8 (fireClockEvent RenderTick) (fix (\loop -> Vty.nextEvent vty >>= \case
