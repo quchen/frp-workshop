@@ -17,7 +17,6 @@ import           Data.Foldable
 import           Data.Function
 import           Data.Sequence              (Seq)
 import qualified Data.Sequence              as Seq
-import           Graphics.Vty
 import qualified Graphics.Vty               as Vty
 import           Reactive.Banana
 import           Reactive.Banana.Frameworks
@@ -51,7 +50,7 @@ makeLenses ''RenderState
 makePrisms ''Direction
 
 paintRenderState :: RenderState -> Vty.Picture
-paintRenderState state = Vty.picForLayers (arenaLayer : translate 1 1 edibleLayer : map (translate 1 1) snakeLayers)
+paintRenderState state = Vty.picForLayers (arenaLayer : Vty.translate 1 1 edibleLayer : map (Vty.translate 1 1) snakeLayers)
   where
     arenaLayer = Vty.vertCat
         [ horizontalBorder
@@ -60,20 +59,13 @@ paintRenderState state = Vty.picForLayers (arenaLayer : translate 1 1 edibleLaye
             , Vty.backgroundFill (view (arena . arenaWidth) state) (view (arena . arenaHeight) state)
             , verticalBorder ]
         , horizontalBorder ]
-    horizontalBorder = Vty.charFill defAttr '-' (view (arena . arenaWidth) state + 2) 1
-    verticalBorder = Vty.charFill defAttr '|' 1 (view (arena . arenaHeight) state)
+    horizontalBorder = Vty.charFill Vty.defAttr '-' (view (arena . arenaWidth) state + 2) 1
+    verticalBorder = Vty.charFill Vty.defAttr '|' 1 (view (arena . arenaHeight) state)
 
     edibleLayer = drawChar '*' (view edible state)
     snakeLayers = toList (fmap (drawChar 'o') (view (snake . body) state))
 
     drawChar c (Vec2 x y) = Vty.translate x y (Vty.char Vty.defAttr c)
-
-initialRenderState :: RenderState
-initialRenderState = RenderState
-    { _arena = initialArena
-    , _snake = initialSnake
-    , _edible = initialEdible
-    }
 
 initialEdible :: Vec2
 initialEdible = Vec2 15 15
@@ -87,8 +79,8 @@ initialSnake :: Snake
 initialSnake = Snake
     { _body = Seq.fromList [Vec2 10 y | y <- [10..15]] }
 
-initialDirecion :: Direction
-initialDirecion = U
+initialDirection :: Direction
+initialDirection = U
 
 moveSnake :: Direction -> Snake -> Snake
 moveSnake dir s = set body newBody s
@@ -112,7 +104,7 @@ sequenceInit = to (\s -> case Seq.viewr s of
     Seq.EmptyR  -> error "Empty sequence!"
     xs Seq.:> _ -> xs)
 
-withVty :: (Vty -> IO a) -> IO a
+withVty :: (Vty.Vty -> IO a) -> IO a
 withVty = bracket (Vty.standardIOConfig >>= Vty.mkVty) Vty.shutdown
 
 main :: IO ()
@@ -123,29 +115,30 @@ main = withVty (\vty -> do
     eventNetwork <- compile (do
         eClock <- fromAddHandler addClockEvent
 
-        eDirection <- fromAddHandler addDirectionEvent
-        bDirection <- accumB initialDirecion (fmap (\newDir _oldDir -> newDir) eDirection)
+        bDirection <- fromChanges initialDirection addDirectionEvent
 
-        bSnake <- accumB initialSnake (moveSnake <$> bDirection <@ eClock)
+        eSnake <- accumE initialSnake (moveSnake <$> bDirection <@ eClock)
 
         let bArena = pure initialArena
         let bEdible = pure initialEdible
 
-        let bRenderState = RenderState <$> bArena <*> bSnake <*> bEdible
-
-        reactimate (fmap (\renderState -> Vty.update vty (paintRenderState renderState))
-                         (bRenderState <@ eClock))
+        do let eRender = (\a e s -> RenderState a s e)
+                     <$> bArena
+                     <*> bEdible
+                     <@> eSnake
+           reactimate (fmap (\renderState -> Vty.update vty (paintRenderState renderState))
+                            eRender)
         )
     actuate eventNetwork
 
-    withClock 1 (fireClockEvent RenderTick) (fix (\loop -> Vty.nextEvent vty >>= \case
-        (EvKey (KChar 'q') _) -> pure ()
-        (EvKey KEsc _)        -> pure ()
-        (EvKey KUp _)         -> fireDirectionEvent U >> loop
-        (EvKey KDown _)       -> fireDirectionEvent D >> loop
-        (EvKey KLeft _)       -> fireDirectionEvent L >> loop
-        (EvKey KRight _)      -> fireDirectionEvent R >> loop
-        _other                -> loop
+    withClock 8 (fireClockEvent RenderTick) (fix (\loop -> Vty.nextEvent vty >>= \case
+        Vty.EvKey (Vty.KChar 'q') _ -> pure ()
+        Vty.EvKey Vty.KEsc _        -> pure ()
+        Vty.EvKey Vty.KUp _         -> fireDirectionEvent U >> loop
+        Vty.EvKey Vty.KDown _       -> fireDirectionEvent D >> loop
+        Vty.EvKey Vty.KLeft _       -> fireDirectionEvent L >> loop
+        Vty.EvKey Vty.KRight _      -> fireDirectionEvent R >> loop
+        _other                      -> loop
         )))
 
 withClock
@@ -156,6 +149,6 @@ withClock
 withClock ticksPerSecond tickAction stuff = bracket acquire release (const stuff)
   where
     acquire = async (forever (do
-        tickAction
+        _ <- tickAction
         threadDelay (1e6 `quot` ticksPerSecond) ))
     release = cancel
