@@ -30,7 +30,6 @@ enemyMoveSpeed = PerSecond 10
 
 
 
-
 newtype PerSecond = PerSecond Int
 
 data Score = Score
