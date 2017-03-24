@@ -117,7 +117,8 @@ main = withVty (\vty -> do
 
         bDirection <- fromChanges initialDirection addDirectionEvent
 
-        eSnake <- accumE initialSnake (moveSnake <$> bDirection <@ eClock)
+        let eSnakeMotion = moveSnake <$> bDirection <@ eClock
+        eSnake <- accumE initialSnake eSnakeMotion
 
         let bArena = pure initialArena
         let bEdible = pure initialEdible
@@ -125,11 +126,23 @@ main = withVty (\vty -> do
         let bEverythingElse :: Behavior (Snake -> RenderState)
             bEverythingElse = fmap flip RenderState <$> bArena <*> bEdible
 
+        let collides :: Arena -> Snake -> Bool
+            collides ar sn =
+                let Vec2 headX headY = view (body . sequenceHead) sn
+                    arenaH = view arenaHeight ar
+                    arenaW = view arenaWidth  ar
+                in  headX < 0 || headY < 0 || headX >= arenaW || headY >= arenaH
+
+        bWithinBounds <- do
+            a <- valueB bArena
+            stepper True (fmap (not . collides a) eSnake)
+
         let eRender :: Reactive.Banana.Event RenderState
-            eRender = bEverythingElse <@> eSnake
+            eRender = bEverythingElse <@> (whenE bWithinBounds eSnake)
 
         reactimate (fmap (Vty.update vty . paintRenderState) eRender)
 
+        
     actuate eventNetwork
 
     withClock 8 (fireClockEvent RenderTick) (fix (\loop -> Vty.nextEvent vty >>= \case
