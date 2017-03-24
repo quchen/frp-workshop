@@ -1,3 +1,5 @@
+{-# LANGUAGE LambdaCase      #-}
+{-# LANGUAGE MultiWayIf      #-}
 {-# LANGUAGE NumDecimals     #-}
 {-# LANGUAGE RankNTypes      #-}
 {-# LANGUAGE TemplateHaskell #-}
@@ -12,6 +14,7 @@ import           Control.Exception
 import           Control.Lens
 import           Control.Monad
 import           Data.Foldable
+import           Data.Function
 import           Data.Sequence              (Seq)
 import qualified Data.Sequence              as Seq
 import           Graphics.Vty
@@ -30,24 +33,25 @@ data Vec2 = Vec2
     , _vy :: Int }
 
 data Snake = Snake
-    { _direction :: Direction
-    , _body      :: Seq Vec2 }
+    { _body :: Seq Vec2 }
 
 data Direction = U | D | L | R
 
-data GameState = GameState
+data RenderState = RenderState
     { _arena  :: Arena
     , _snake  :: Snake
     , _edible :: Vec2 }
 
+data RenderTick = RenderTick
+
 makeLenses ''Arena
 makeLenses ''Vec2
 makeLenses ''Snake
-makeLenses ''GameState
+makeLenses ''RenderState
 makePrisms ''Direction
 
-paintGameState :: GameState -> Vty.Picture
-paintGameState state = Vty.picForLayers (arenaLayer : translate 1 1 edibleLayer : map (translate 1 1) snakeLayers)
+paintRenderState :: RenderState -> Vty.Picture
+paintRenderState state = Vty.picForLayers (arenaLayer : translate 1 1 edibleLayer : map (translate 1 1) snakeLayers)
   where
     arenaLayer = Vty.vertCat
         [ horizontalBorder
@@ -64,8 +68,8 @@ paintGameState state = Vty.picForLayers (arenaLayer : translate 1 1 edibleLayer 
 
     drawChar c (Vec2 x y) = Vty.translate x y (Vty.char Vty.defAttr c)
 
-initialGameState :: GameState
-initialGameState = GameState
+initialRenderState :: RenderState
+initialRenderState = RenderState
     { _arena = initialArena
     , _snake = initialSnake
     , _edible = initialEdible
@@ -81,13 +85,15 @@ initialArena = Arena
 
 initialSnake :: Snake
 initialSnake = Snake
-    { _body = Seq.fromList [Vec2 10 10, Vec2 10 11, Vec2 10 12]
-    , _direction = U }
+    { _body = Seq.fromList [Vec2 10 y | y <- [10..15]] }
 
-moveSnake :: Snake -> Snake
-moveSnake s = set body newBody s
+initialDirecion :: Direction
+initialDirecion = U
+
+moveSnake :: Direction -> Snake -> Snake
+moveSnake dir s = set body newBody s
   where
-    newHead = case view direction s of
+    newHead = case dir of
         U -> Vec2 headX (headY-1)
         D -> Vec2 headX (headY+1)
         L -> Vec2 (headX-1) headY
@@ -95,7 +101,6 @@ moveSnake s = set body newBody s
     Vec2 headX headY = view (body . sequenceHead) s
 
     newBody = newHead Seq.<| view (body . sequenceInit) s
-
 
 sequenceHead :: Getter (Seq a) a
 sequenceHead = to (\s -> case Seq.viewl s of
@@ -110,26 +115,38 @@ sequenceInit = to (\s -> case Seq.viewr s of
 withVty :: (Vty -> IO a) -> IO a
 withVty = bracket (Vty.standardIOConfig >>= Vty.mkVty) Vty.shutdown
 
+main :: IO ()
 main = withVty (\vty -> do
     (addClockEvent, fireClockEvent) <- newAddHandler
+    (addDirectionEvent, fireDirectionEvent) <- newAddHandler
 
     eventNetwork <- compile (do
         eClock <- fromAddHandler addClockEvent
 
-        bSnake <- accumB initialSnake (fmap (const moveSnake) eClock)
+        eDirection <- fromAddHandler addDirectionEvent
+        bDirection <- accumB initialDirecion (fmap (\newDir _oldDir -> newDir) eDirection)
+
+        bSnake <- accumB initialSnake (moveSnake <$> bDirection <@ eClock)
+
         let bArena = pure initialArena
         let bEdible = pure initialEdible
 
-        let bGameState = GameState <$> bArena <*> bSnake <*> bEdible
+        let bRenderState = RenderState <$> bArena <*> bSnake <*> bEdible
 
-        reactimate (fmap (\gameState -> Vty.update vty (paintGameState gameState))
-                         (bGameState <@ eClock))
+        reactimate (fmap (\renderState -> Vty.update vty (paintRenderState renderState))
+                         (bRenderState <@ eClock))
         )
     actuate eventNetwork
 
-    withClock 1 (fireClockEvent ()) (do
-        input <- Vty.nextEvent vty
-        pure () ))
+    withClock 1 (fireClockEvent RenderTick) (fix (\loop -> Vty.nextEvent vty >>= \case
+        (EvKey (KChar 'q') _) -> pure ()
+        (EvKey KEsc _)        -> pure ()
+        (EvKey KUp _)         -> fireDirectionEvent U >> loop
+        (EvKey KDown _)       -> fireDirectionEvent D >> loop
+        (EvKey KLeft _)       -> fireDirectionEvent L >> loop
+        (EvKey KRight _)      -> fireDirectionEvent R >> loop
+        _other                -> loop
+        )))
 
 withClock
     :: Int           -- ^ Tick periodicity
@@ -139,6 +156,6 @@ withClock
 withClock ticksPerSecond tickAction stuff = bracket acquire release (const stuff)
   where
     acquire = async (forever (do
-        threadDelay (1e6 `quot` ticksPerSecond)
-        tickAction ))
+        tickAction
+        threadDelay (1e6 `quot` ticksPerSecond) ))
     release = cancel
